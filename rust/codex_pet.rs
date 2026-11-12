@@ -357,6 +357,7 @@ struct Bucket {
 #[derive(Clone, Debug, Serialize)]
 struct Usage {
     fetched_at: u64,
+    from_cli: bool,
     buckets: Vec<Bucket>,
     resets_available: Option<u64>,
 }
@@ -374,6 +375,7 @@ fn normalize_usage(raw: &Value) -> Usage {
     };
     Usage {
         fetched_at: now_ms(),
+        from_cli: false,
         resets_available: raw["rateLimitResetCredits"]["availableCount"].as_u64(),
         buckets: buckets
             .into_iter()
@@ -398,6 +400,238 @@ fn normalize_usage(raw: &Value) -> Usage {
 }
 fn allowed_tool(name: &str) -> bool {
     matches!(name, "list_threads" | "get_usage_limits")
+}
+
+const CLI_READ_LIMIT: u64 = 1024 * 1024;
+fn codex_home() -> PathBuf {
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join(".codex")
+        })
+}
+fn rollout_time(text: &str) -> Option<u64> {
+    let part = |a, b| text.get(a..b)?.parse::<u16>().ok();
+    if !text.ends_with('Z') {
+        return None;
+    }
+    let mut st: SYSTEMTIME = unsafe { zeroed() };
+    st.wYear = part(0, 4)?;
+    st.wMonth = part(5, 7)?;
+    st.wDay = part(8, 10)?;
+    st.wHour = part(11, 13)?;
+    st.wMinute = part(14, 16)?;
+    st.wSecond = part(17, 19)?;
+    let fraction = text
+        .get(19..)?
+        .strip_prefix('.')
+        .unwrap_or("")
+        .trim_end_matches('Z');
+    st.wMilliseconds = format!("{fraction:0<3}").get(..3)?.parse().ok()?;
+    let mut ft: FILETIME = unsafe { zeroed() };
+    if unsafe { SystemTimeToFileTime(&st, &mut ft) } == 0 {
+        return None;
+    }
+    (((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64)
+        .checked_div(10000)?
+        .checked_sub(11644473600000)
+}
+fn cli_usage(raw: &Value, at: u64) -> Usage {
+    let window = |w: &Value| {
+        if w.is_object() {
+            json!({"usedPercent":w["used_percent"],"windowDurationMins":w["window_minutes"],"resetsAt":w["resets_at"]})
+        } else {
+            Value::Null
+        }
+    };
+    let mut usage = normalize_usage(
+        &json!({"rateLimits":{"limitName":raw["limit_name"],"primary":window(&raw["primary"]),"secondary":window(&raw["secondary"]),"credits":raw["credits"]}}),
+    );
+    usage.fetched_at = at;
+    usage.from_cli = true;
+    usage
+}
+#[derive(Default)]
+struct CliTail {
+    offset: u64,
+    initialized: bool,
+    cli: bool,
+    dropping: bool,
+    status: Value,
+}
+struct CliLogs {
+    root: PathBuf,
+    since: u64,
+    files: HashMap<PathBuf, CliTail>,
+    usage: Option<Usage>,
+    complete_until: u64,
+}
+impl CliLogs {
+    fn new(root: PathBuf, since: u64) -> Self {
+        Self {
+            root,
+            since,
+            files: HashMap::new(),
+            usage: None,
+            complete_until: 0,
+        }
+    }
+    fn consume(&mut self, tail: &mut CliTail, record: &Value, live: bool) {
+        if !tail.cli || record["type"] != "event_msg" {
+            return;
+        }
+        let Some(at) = record["timestamp"].as_str().and_then(rollout_time) else {
+            return;
+        };
+        if at < self.since {
+            return;
+        }
+        let p = &record["payload"];
+        if p["type"] == "token_count"
+            && p["rate_limits"].is_object()
+            && self.usage.as_ref().is_none_or(|u| at >= u.fetched_at)
+        {
+            self.usage = Some(cli_usage(&p["rate_limits"], at));
+        }
+        let next = match p["type"].as_str().unwrap_or("") {
+            "task_started"
+            | "turn_started"
+            | "exec_command_begin"
+            | "patch_apply_begin"
+            | "mcp_tool_call_begin" => "active",
+            "task_complete" | "turn_complete" => {
+                if live && matches!(classify(&tail.status, 0), State::Working | State::Waiting) {
+                    self.complete_until = now_ms() + 10000;
+                }
+                "idle"
+            }
+            "turn_aborted" | "shutdown_complete" => "idle",
+            // Current CLI versions do not persist these transient events.
+            "exec_approval_request" | "apply_patch_approval_request" => "waitingOnApproval",
+            "request_user_input" => "waitingOnUserInput",
+            "error" => "systemError",
+            _ => return,
+        };
+        tail.status = json!(next);
+    }
+    fn read(&mut self, path: &Path, tail: &mut CliTail) -> std::io::Result<()> {
+        let mut file = File::open(path)?;
+        let size = file.metadata()?.len();
+        if size < tail.offset {
+            *tail = CliTail::default();
+        }
+        let live = tail.initialized;
+        if !tail.initialized {
+            let mut header = Vec::new();
+            (&mut file).take(CLI_READ_LIMIT).read_to_end(&mut header)?;
+            let Some(end) = header.iter().position(|b| *b == b'\n') else {
+                return Ok(());
+            };
+            let Ok(meta) = serde_json::from_slice::<Value>(&header[..end]) else {
+                return Ok(());
+            };
+            tail.cli = meta["type"] == "session_meta"
+                && matches!(meta["payload"]["source"].as_str(), Some("cli" | "exec"));
+            tail.initialized = true;
+            tail.offset = (end as u64 + 1).max(size.saturating_sub(CLI_READ_LIMIT));
+            tail.dropping = tail.offset > end as u64 + 1;
+        }
+        if !tail.cli {
+            tail.offset = size;
+            return Ok(());
+        }
+        file.seek(SeekFrom::Start(tail.offset))?;
+        let mut bytes = Vec::new();
+        (&mut file).take(CLI_READ_LIMIT).read_to_end(&mut bytes)?;
+        let mut start = 0;
+        for (i, b) in bytes.iter().enumerate() {
+            if *b != b'\n' {
+                continue;
+            }
+            if !tail.dropping {
+                if let Ok(record) = serde_json::from_slice::<Value>(&bytes[start..i]) {
+                    self.consume(tail, &record, live);
+                }
+            }
+            tail.dropping = false;
+            start = i + 1;
+        }
+        if start == 0 && bytes.len() as u64 == CLI_READ_LIMIT {
+            tail.offset += CLI_READ_LIMIT;
+            tail.dropping = true;
+        } else {
+            tail.offset += start as u64;
+        }
+        Ok(())
+    }
+    fn poll(&mut self) -> Snapshot {
+        fn walk(dir: &Path, depth: usize, files: &mut Vec<(SystemTime, PathBuf)>) {
+            if depth > 4 {
+                return;
+            }
+            let Ok(entries) = fs::read_dir(dir) else {
+                return;
+            };
+            for e in entries.filter_map(Result::ok) {
+                let Ok(kind) = e.file_type() else {
+                    continue;
+                };
+                if kind.is_dir() {
+                    walk(&e.path(), depth + 1, files);
+                } else if kind.is_file()
+                    && e.file_name().to_string_lossy().starts_with("rollout-")
+                    && e.path().extension().is_some_and(|v| v == "jsonl")
+                {
+                    if let Ok(at) = e.metadata().and_then(|m| m.modified()) {
+                        files.push((at, e.path()));
+                    }
+                }
+            }
+        }
+        let mut entries = Vec::new();
+        walk(&self.root, 0, &mut entries);
+        entries.sort_by(|a, b| b.0.cmp(&a.0));
+        entries.truncate(50);
+        let seen: HashSet<_> = entries.iter().map(|(_, p)| p.clone()).collect();
+        self.files.retain(|p, _| seen.contains(p));
+        for (modified, path) in entries {
+            let mut tail = self.files.remove(&path).unwrap_or_default();
+            if self.read(&path, &mut tail).is_ok() {
+                if modified
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+                    < self.since as u128
+                {
+                    tail.status = json!("idle");
+                }
+                self.files.insert(path, tail);
+            }
+        }
+        let threads = self
+            .files
+            .iter()
+            .filter(|(_, t)| t.cli)
+            .map(|(p, t)| {
+                (
+                    p.to_string_lossy().into_owned(),
+                    Shadow {
+                        status: t.status.clone(),
+                        requests: Vec::new(),
+                        revision: 0,
+                        id: String::new(),
+                        host: "cli".into(),
+                    },
+                )
+            })
+            .collect();
+        aggregate(&threads, self.complete_until, true)
+    }
+    fn usage(&self) -> Result<Usage, String> {
+        self.usage.clone().ok_or_else(|| {
+            "CLI 尚未记录额度；请先完成一次请求（API Key 账号可能不提供额度）".into()
+        })
+    }
 }
 struct Pipe {
     file: File,
@@ -749,6 +983,35 @@ enum Notice {
 fn start_bridge(tx: Sender<Notice>, stop: Arc<AtomicBool>) -> Sender<BridgeCommand> {
     let (commands, rx) = mpsc::channel();
     thread::spawn(move || {
+        let args: Vec<String> = std::env::args().collect();
+        if flag(&args, "--cli") {
+            let since = option(&args, "--codex-since")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(now_ms);
+            let mut logs = CliLogs::new(codex_home().join("sessions"), since);
+            let mut next = Instant::now();
+            while !stop.load(Ordering::Relaxed) {
+                let mut usage = false;
+                while let Ok(command) = rx.try_recv() {
+                    match command {
+                        BridgeCommand::Usage => usage = true,
+                        BridgeCommand::Reconnect => {
+                            logs = CliLogs::new(codex_home().join("sessions"), now_ms());
+                            next = Instant::now();
+                        }
+                    }
+                }
+                if usage || Instant::now() >= next {
+                    next = Instant::now() + Duration::from_millis(3500);
+                    let _ = tx.send(Notice::State(logs.poll()));
+                }
+                if usage {
+                    let _ = tx.send(Notice::Usage(logs.usage()));
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+            return;
+        }
         let mut desktop: Option<Desktop> = None;
         let mut next_poll = Instant::now();
         let mut want_usage = false;
@@ -898,7 +1161,7 @@ unsafe extern "system" fn has_window(hwnd: HWND, param: LPARAM) -> BOOL {
     }
     1
 }
-fn find_codex() -> Option<(u32, Handle)> {
+fn find_desktop() -> Option<(u32, Handle)> {
     let snapshot = Handle(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) });
     if snapshot.0 == INVALID_HANDLE_VALUE {
         return None;
@@ -943,6 +1206,38 @@ fn find_codex() -> Option<(u32, Handle)> {
         ok = unsafe { Process32NextW(snapshot.0, &mut entry) };
     }
     None
+}
+fn find_cli() -> Option<(u32, Handle)> {
+    // WMI supplies the command line, so an app-server daemon is never treated
+    // as an interactive CLI. This runs only while the launcher has no owner.
+    let script = r#"$s=(Get-Process -Id $PID).SessionId; Get-CimInstance Win32_Process -Filter "Name='codex.exe'" | Where-Object { $_.SessionId -eq $s -and $_.CommandLine -and $_.ExecutablePath -notmatch '\\OpenAI.Codex_' -and (($_.CommandLine -replace '^("[^"]*"|\S+)\s*','') -notmatch '(^|\s)(app-server|exec-server|mcp-server|mcp|completion|login|logout)(\s|$)') } | Select-Object -First 1 -ExpandProperty ProcessId"#;
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW_FLAG)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let pid = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .ok()?;
+    process_handle(pid).map(|h| (pid, h))
+}
+fn find_codex() -> Option<(u32, Handle)> {
+    find_desktop().or_else(find_cli)
+}
+fn process_since(handle: &Handle) -> u64 {
+    let mut created: FILETIME = unsafe { zeroed() };
+    let mut exit: FILETIME = unsafe { zeroed() };
+    let mut kernel: FILETIME = unsafe { zeroed() };
+    let mut user: FILETIME = unsafe { zeroed() };
+    if unsafe { GetProcessTimes(handle.0, &mut created, &mut exit, &mut kernel, &mut user) } == 0 {
+        return now_ms();
+    }
+    (((created.dwHighDateTime as u64) << 32) | created.dwLowDateTime as u64) / 10000
+        - 11644473600000
 }
 fn set_startup(enabled: bool) -> Result<(), String> {
     let mut key: HKEY = null_mut();
@@ -1030,7 +1325,11 @@ fn watcher(args: &[String], profile: &Path) -> Result<(), String> {
             owner = if let Some(pid) = fixed {
                 process_handle(pid).map(|h| (pid, h))
             } else {
-                find_codex()
+                if flag(args, "--cli") {
+                    find_cli()
+                } else {
+                    find_codex()
+                }
             };
         }
         if let Some(p) = child.as_mut() {
@@ -1039,7 +1338,7 @@ fn watcher(args: &[String], profile: &Path) -> Result<(), String> {
                 dismissed = true;
             }
         }
-        if let Some((pid, _)) = &owner {
+        if let Some((pid, handle)) = &owner {
             if child.is_none() && !dismissed {
                 let mut command = Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
                 command
@@ -1049,6 +1348,13 @@ fn watcher(args: &[String], profile: &Path) -> Result<(), String> {
                     .arg("--profile")
                     .arg(profile)
                     .creation_flags(CREATE_NO_WINDOW_FLAG);
+                if flag(args, "--cli") || find_desktop().is_none_or(|(desktop, _)| desktop != *pid)
+                {
+                    command
+                        .arg("--cli")
+                        .arg("--codex-since")
+                        .arg(process_since(handle).to_string());
+                }
                 if flag(args, "--demo") {
                     command.arg("--demo");
                 }
@@ -2479,7 +2785,11 @@ impl App {
                 0
             }
         });
-        let content = (rows * 82 + buckets * 24 + if self.usage_error { 24 } else { 0 }) as f64;
+        let cli_quota = self.usage.as_ref().is_some_and(|u| u.from_cli);
+        let content = (rows * 82
+            + buckets * 24
+            + if self.usage_error { 24 } else { 0 }
+            + if cli_quota { 24 } else { 0 }) as f64;
         let height =
             (content + 48.0).clamp(88.0, (HEIGHT as f64 - 60.0 - sprite_h - 12.0).min(292.0));
         let panel = self.rect(
@@ -2558,6 +2868,26 @@ impl App {
             y += px(24.0);
         }
         if let Some(usage) = &self.usage {
+            if usage.from_cli {
+                self.canvas.text(
+                    &mut self.fonts,
+                    BoxRect {
+                        x: viewport.x,
+                        y,
+                        w: viewport.w,
+                        h: px(24.0),
+                    },
+                    &format!(
+                        "CLI 日志快照 · {}",
+                        reset_text(Some(usage.fetched_at / 1000)).trim_end_matches(" 重置")
+                    ),
+                    px(10.0),
+                    false,
+                    [125, 152, 140, 255],
+                    false,
+                );
+                y += px(24.0);
+            }
             for bucket in &usage.buckets {
                 if usage.buckets.len() > 1 {
                     self.canvas.text(
@@ -3136,7 +3466,11 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     if let Some(file) = option(&args, "--owner-probe") {
-        let owner = find_codex();
+        let owner = if flag(&args, "--cli") {
+            find_cli()
+        } else {
+            find_codex()
+        };
         write_json(
             Path::new(&file),
             &json!({"found":owner.is_some(),"codexPid":owner.as_ref().map(|(pid,_)|pid),"sessionId":session_id()}),
@@ -3144,6 +3478,18 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     if let Some(file) = option(&args, "--probe") {
+        if flag(&args, "--cli") {
+            let since = option(&args, "--codex-since")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(now_ms);
+            let mut logs = CliLogs::new(codex_home().join("sessions"), since);
+            let state = logs.poll();
+            write_json(
+                Path::new(&file),
+                &json!({"source":"cli","state":state,"usage":logs.usage().ok(),"animationCount":Pack::read()?.animations.len()}),
+            )?;
+            return Ok(());
+        }
         let result = (|| -> Result<Value, String> {
             let mut d = Desktop::connect()?;
             d.list()?;
@@ -3216,6 +3562,83 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cli_events_keep_only_status_and_timestamped_quota() {
+        let since = rollout_time("2026-11-12T00:00:00Z").unwrap();
+        assert_eq!(rollout_time("2026-11-12T00:00:01.123Z"), Some(since + 1123));
+        assert_eq!(rollout_time("bad"), None);
+        let mut logs = CliLogs::new(PathBuf::new(), since);
+        let mut tail = CliTail {
+            cli: true,
+            ..CliTail::default()
+        };
+        let event = |kind| json!({"timestamp":"2026-11-12T00:00:01.123Z","type":"event_msg","payload":{"type":kind,"last_agent_message":"private"}});
+        logs.consume(&mut tail, &event("task_started"), true);
+        assert_eq!(classify(&tail.status, 0), State::Working);
+        logs.consume(&mut tail, &event("task_complete"), true);
+        assert_eq!(classify(&tail.status, 0), State::Idle);
+        assert!(logs.complete_until > now_ms());
+        logs.consume(&mut tail, &event("turn_started"), true);
+        logs.consume(&mut tail, &event("turn_aborted"), true);
+        assert_eq!(classify(&tail.status, 0), State::Idle);
+        let mut old = event("task_started");
+        old["timestamp"] = json!("2026-11-11T00:00:00Z");
+        logs.consume(&mut tail, &old, true);
+        assert_eq!(classify(&tail.status, 0), State::Idle);
+        let usage = cli_usage(
+            &json!({"primary":{"used_percent":21,"window_minutes":300},"secondary":{"used_percent":null}}),
+            since,
+        );
+        assert_eq!(usage.fetched_at, since);
+        assert!(usage.from_cli);
+        assert_eq!(usage.buckets[0].windows[0].remaining, Some(79.0));
+        assert_eq!(usage.buckets[0].windows[1].remaining, None);
+        assert_eq!(usage.buckets[0].windows[0].minutes, Some(300));
+    }
+    #[test]
+    fn cli_rollouts_recover_from_partial_records_and_ignore_other_sources() {
+        let root = std::env::temp_dir().join(format!("codex-pet-cli-test-{}", uuid()));
+        fs::create_dir_all(&root).unwrap();
+        let result = std::panic::catch_unwind(|| {
+            let file = root.join("rollout-test.jsonl");
+            fs::write(
+                &file,
+                b"{\"type\":\"session_meta\",\"payload\":{\"source\":\"cli\"}}\n",
+            )
+            .unwrap();
+            let mut logs = CliLogs::new(root.clone(), 0);
+            assert_eq!(logs.poll().state, State::Idle);
+            let line="{\"type\":\"event_msg\",\"timestamp\":\"2026-11-12T00:00:01Z\",\"payload\":{\"type\":\"task_started\"}}\n";
+            let mut writer = OpenOptions::new().append(true).open(&file).unwrap();
+            writer.write_all(&line.as_bytes()[..40]).unwrap();
+            assert_eq!(logs.poll().state, State::Idle);
+            writer.write_all(&line.as_bytes()[40..]).unwrap();
+            assert_eq!(logs.poll().state, State::Working);
+            writer
+                .write_all(&vec![b'x'; 2 * CLI_READ_LIMIT as usize])
+                .unwrap();
+            writer.write_all(b"\n").unwrap();
+            writer
+                .write_all(line.replace("task_started", "task_complete").as_bytes())
+                .unwrap();
+            for _ in 0..4 {
+                logs.poll();
+            }
+            assert!(logs.complete_until > now_ms());
+            drop(writer);
+            fs::write(
+                &file,
+                b"{\"type\":\"session_meta\",\"payload\":{\"source\":\"mcp\"}}\n",
+            )
+            .unwrap();
+            logs.complete_until = 0;
+            assert_eq!(logs.poll().state, State::Idle);
+            fs::remove_file(&file).unwrap();
+            assert_eq!(logs.poll().working, 0);
+        });
+        fs::remove_dir_all(&root).unwrap();
+        result.unwrap();
+    }
     fn sheet(count: usize) -> Sheet {
         Sheet {
             frame_width: 640,

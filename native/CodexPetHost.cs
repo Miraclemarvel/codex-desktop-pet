@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Management;
 using System.Security.Principal;
 using System.Threading;
 
@@ -17,7 +18,27 @@ internal static class CodexPetHost
     static string Json(string s) { return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", " ").Replace("\n", " ") + "\""; }
     static string Key(Process p) { return p.Id + ":" + p.StartTime.ToUniversalTime().Ticks; }
 
-    static Process FindCodex()
+    static bool IsCli(Process p)
+    {
+        try
+        {
+            if (!String.Equals(p.ProcessName, "codex", StringComparison.OrdinalIgnoreCase)) return false;
+            if (p.MainModule.FileName.IndexOf("\\OpenAI.Codex_", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+            using (ManagementObject entry = new ManagementObject("Win32_Process.Handle='" + p.Id + "'"))
+            {
+                string command = (string)entry["CommandLine"];
+                if (String.IsNullOrEmpty(command)) return false;
+                // Ignore the executable itself; it may live in a directory with spaces.
+                int end = command[0] == '"' ? command.IndexOf('"', 1) + 1 : command.IndexOf(' ');
+                string arguments = end > 0 ? command.Substring(end).Trim() : "";
+                return !System.Text.RegularExpressions.Regex.IsMatch(arguments,
+                    @"(^|\s)(app-server|exec-server|mcp-server|mcp|completion|login|logout)(\s|$)");
+            }
+        }
+        catch { return false; }
+    }
+
+    static Process FindCodex(bool cliOnly)
     {
         int session = Process.GetCurrentProcess().SessionId;
         foreach (string name in new string[] { "ChatGPT", "Codex" })
@@ -27,13 +48,18 @@ internal static class CodexPetHost
                 try
                 {
                     string exe = p.MainModule.FileName;
-                    if (p.SessionId == session && p.MainWindowHandle != IntPtr.Zero &&
+                    if (!cliOnly && p.SessionId == session && p.MainWindowHandle != IntPtr.Zero &&
                         exe.IndexOf("\\OpenAI.Codex_", StringComparison.OrdinalIgnoreCase) >= 0)
                         return p;
                 }
                 catch { }
                 p.Dispose();
             }
+        }
+        foreach (Process p in Process.GetProcessesByName("codex"))
+        {
+            try { if (p.SessionId == session && IsCli(p)) return p; } catch { }
+            p.Dispose();
         }
         return null;
     }
@@ -96,7 +122,7 @@ internal static class CodexPetHost
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Codex Desktop Pet", "host-state.json"));
         if (Array.IndexOf(args, "--probe") >= 0)
         {
-            using (Process owner = FindCodex()) State(stateFile, "probe", owner, null, null);
+            using (Process owner = FindCodex(Array.IndexOf(args, "--cli") >= 0)) State(stateFile, "probe", owner, null, null);
             return 0;
         }
         bool first;
@@ -125,7 +151,7 @@ internal static class CodexPetHost
                             if (pet != null) pet.Dispose();
                             if (owner != null) owner.Dispose();
                             pet = null; owner = null;
-                            try { owner = fixedPid > 0 ? Process.GetProcessById(fixedPid) : FindCodex(); } catch { }
+                            try { owner = fixedPid > 0 ? Process.GetProcessById(fixedPid) : FindCodex(Array.IndexOf(args, "--cli") >= 0); } catch { }
                             if (!Alive(owner))
                             {
                                 State(stateFile, "waiting", null, null, null);
@@ -148,6 +174,8 @@ internal static class CodexPetHost
                             try
                             {
                                 string childArgs = "--codex-pid " + owner.Id;
+                                if (Array.IndexOf(args, "--cli") >= 0 || IsCli(owner))
+                                    childArgs += " --cli --codex-since " + ((long)(owner.StartTime.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalMilliseconds);
                                 if (testData != null) childArgs += " --test-user-data " + Quote(testData);
                                 ProcessStartInfo info = new ProcessStartInfo(petExe, childArgs);
                                 info.UseShellExecute = false; info.CreateNoWindow = true;
