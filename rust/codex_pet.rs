@@ -2993,6 +2993,7 @@ fn gui(args: &[String], profile: PathBuf) -> Result<(), String> {
     let mut wc: WNDCLASSW = unsafe { zeroed() };
     wc.lpfnWndProc = Some(wndproc);
     wc.hInstance = instance;
+    wc.hIcon = unsafe { LoadIconW(instance, 1usize as *const u16) };
     wc.lpszClassName = class.as_ptr();
     wc.hCursor = unsafe { LoadCursorW(null_mut(), IDC_ARROW) };
     unsafe {

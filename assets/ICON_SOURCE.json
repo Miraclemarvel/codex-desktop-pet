@@ -1,0 +1,35 @@
+{
+  "repository": "https://github.com/hunmer/aboutme-pets",
+  "directory": "pets/gpt",
+  "animation": "元气挥手",
+  "frameIndex": 48,
+  "frameSize": [
+    640,
+    360
+  ],
+  "crop": [
+    210,
+    18,
+    432,
+    222
+  ],
+  "canvasSize": [
+    256,
+    256
+  ],
+  "transformation": "Crop original artwork, preserve alpha, Lanczos resize; no AI regeneration or recoloring",
+  "sourceWebPSha256": "752f8cf7e0bff29963558c05f1d6e3487fdfcf3d9655e76fb2f04e8dc70357b9",
+  "iconSizes": [
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    64,
+    96,
+    128,
+    256
+  ],
+  "upstreamCommit": "4f8e9e327bad8c137d98d8ec591712af920de8b7"
+}

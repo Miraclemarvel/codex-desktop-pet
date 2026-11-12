@@ -43,6 +43,8 @@ try{
  New-Item -ItemType Directory -Path $packageOutput -Force | Out-Null
  $destination=Join-Path $packageOutput $name
  Copy-Item -LiteralPath rust/target/release/CodexPetRust.exe -Destination $destination -Force
+ python scripts/set-exe-icon.py $destination assets/app.ico
+ if($LASTEXITCODE -ne 0){throw 'Rust application icon embedding failed.'}
  $digest=(Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
  [IO.File]::WriteAllText(($destination+'.sha256'),($digest+'  '+$name+"`n"),[Text.Encoding]::ASCII)
  [pscustomobject]@{path=$destination;bytes=(Get-Item -LiteralPath $destination).Length;sha256=$digest;rustSourceFiles=1;animations=92} | ConvertTo-Json

@@ -2,7 +2,9 @@
 
 应用逻辑集中在 [rust/codex_pet.rs](../rust/codex_pet.rs)，Cargo 清单与锁文件记录编译依赖。发行物为单个 Windows x64 EXE，含全部 92 个原始动画，无需 Electron、Node.js、WebView 或额外资源文件。
 
-当前预览版：**[v0.5.0-preview.3](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.5.0-preview.3)** · [下载 EXE](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.3/CodexPet-Rust-Windows-x64-v0.5.0-preview.3.exe) · [SHA-256 校验文件](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.3/CodexPet-Rust-Windows-x64-v0.5.0-preview.3.exe.sha256)
+程序图标取自白龙“元气挥手”动作第 48 帧的笑脸头像，保留透明背景，内嵌 16–256 像素的十种尺寸。来源和裁剪记录见 [assets/ICON_SOURCE.json](../assets/ICON_SOURCE.json)，图标不需要作为外部文件放在 EXE 旁边。
+
+当前预览版：**[v0.5.0-preview.4](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.5.0-preview.4)** · [下载 EXE](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.4/CodexPet-Rust-Windows-x64-v0.5.0-preview.4.exe) · [SHA-256 校验文件](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.4/CodexPet-Rust-Windows-x64-v0.5.0-preview.4.exe.sha256)
 
 ## 使用
 
@@ -24,6 +26,8 @@ Rust 版升级时，先在旧版右键选择“退出并关闭后台监听”，
 0.5.0-preview.2 调整文字：数字与西文使用 Segoe UI，中文使用微软雅黑 UI；降低字重并按实际 DPI 做三倍采样的灰度抗锯齿。额度数字由 27 缩小到 20 逻辑像素，百分号独立使用 11 像素辅助字号。字形覆盖缓存有固定上限，不随动画帧反复光栅化。
 
 0.5.0-preview.3 在额度卡片左下角以 10 像素小字显示“可重置 N 次”，读取接口的实际可用重置次数。接口未返回次数时显示“重置次数 —”，不把未知值当作零；底栏固定在卡片下方，滚动额度内容时仍可见。
+
+0.5.0-preview.4 将笑脸头像图标内嵌到 EXE，并供程序窗口使用；构建脚本自动验证十种尺寸的资源，确认程序代码区未被图标写入改变。GitHub Windows CI 构建后保存 EXE 与校验文件，发布使用同一份已验证产物。
 
 ## 无损封装
 

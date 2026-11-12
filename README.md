@@ -1,8 +1,10 @@
 # Codex 白龙桌宠
 
+<img src="assets/app-icon.png" alt="白龙笑脸程序图标" width="64" height="64">
+
 Windows 上陪伴 Codex 工作的透明桌宠，支持任务状态同步、剩余额度查看和 92 个角色动作。
 
-**Rust 单 EXE 预览版：[v0.5.0-preview.3](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.5.0-preview.3)** · **Electron 稳定版：[v0.4.1](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.4.1)**
+**Rust 单 EXE 预览版：[v0.5.0-preview.4](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.5.0-preview.4)** · **Electron 稳定版：[v0.4.1](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.4.1)**
 
 **角色与动画素材来自 [hunmer/aboutme-pets 的 GPT 动作包](https://github.com/hunmer/aboutme-pets/tree/main/pets/gpt)，由 hunmer 生成。感谢原作者提供素材！本项目负责桌宠程序与 Codex 接入。**
 
@@ -10,7 +12,7 @@ Windows 上陪伴 Codex 工作的透明桌宠，支持任务状态同步、剩�
 
 ## 下载与使用
 
-- **[下载 Rust 单 EXE（Windows x64，约 130 MiB）](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.3/CodexPet-Rust-Windows-x64-v0.5.0-preview.3.exe)**：放在固定文件夹后双击运行。全部动画内嵌，无需 Electron、Node.js、WebView 或额外资源文件。详见 [Rust 版使用与编译说明](docs/rust.md)。
+- **[下载 Rust 单 EXE（Windows x64，约 130 MiB）](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.4/CodexPet-Rust-Windows-x64-v0.5.0-preview.4.exe)**：放在固定文件夹后双击运行。全部动画内嵌，无需 Electron、Node.js、WebView 或额外资源文件。详见 [Rust 版使用与编译说明](docs/rust.md)。
 - **[下载 Electron 稳定版安装包](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.4.1)**：解压后双击 `安装并启动.cmd`。无需安装 Node.js；请保留解压后的文件夹位置。
 
 两种版本均不需要管理员权限。从 Electron 切换到 Rust 时，先关闭旧版的“随 Codex 启停”并退出。Rust 版升级时，先在旧版右键选择“退出并关闭后台监听”，再运行新版 EXE。
@@ -45,6 +47,8 @@ Rust 版需要 Windows x64、Rust stable（MSVC）、Visual Studio C++ 编译工
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-rust.ps1
 ```
+
+EXE 图标来自“元气挥手”第 48 帧笑脸头像，内嵌 16–256 像素的十种尺寸。来源记录见 [assets/ICON_SOURCE.json](assets/ICON_SOURCE.json)。
 
 应用逻辑集中在 [rust/codex_pet.rs](rust/codex_pet.rs)，构建依赖由 `rust/Cargo.toml` 和 `rust/Cargo.lock` 记录。脚本生成内嵌素材包、运行 16 项 Rust 测试，并输出单个 EXE 与 SHA-256 校验文件。
 
