@@ -17,7 +17,7 @@ Windows 上陪伴 Codex 工作的透明桌宠，支持任务状态同步、剩�
 
 两种版本均不需要管理员权限。从 Electron 切换到 Rust 时，先关闭旧版的“随 Codex 启停”并退出。Rust 版升级时，先在旧版右键选择“退出并关闭后台监听”，再运行新版 EXE。
 
-- Codex 打开时自动出现，Codex 主进程退出后自动结束；最小化 Codex 时继续陪伴。不显示托盘图标，也不占任务栏。
+- Codex Desktop 或 Windows 原生 Codex CLI 打开时自动出现，跟随的进程退出后自动结束；最小化 Codex 时继续陪伴。不显示托盘图标，也不占任务栏。
 - 点击角色或状态条查看账号剩余额度、重置时间；卡片打开时每分钟刷新，也可手动刷新。Rust 版卡片左下角以小字显示可用重置次数。
 - 按住角色拖动；右键可恢复到屏幕内、查看动作图鉴、调整大小与画面效果。
 - 待机动态可选 **静态、安静、适中、活泼**。默认安静，约每 3 分钟播放一个小动作，其余时间轻微呼吸。
@@ -32,13 +32,36 @@ Rust 版额度卡片（演示数据）：
 
 ## 状态与额度接入
 
-通过当前 Windows 用户的 Codex 桌面本地管道读取真实任务状态与账号额度，仅允许调用 `list_threads` 和 `get_usage_limits` 两种只读工具，无需额外模型调用。额度显示账号共享的剩余百分比与重置时间，不估算剩余消息数；没有返回的数据会标记不可用，刷新失败时标记缓存。
+**Desktop 模式**通过当前 Windows 用户的 Codex 桌面本地管道读取真实任务状态与账号额度，仅允许调用 `list_threads` 和 `get_usage_limits` 两种只读工具，无需额外模型调用。额度显示账号共享的剩余百分比与重置时间，不估算剩余消息数；没有返回的数据会标记不可用，刷新失败时标记缓存。
 
 后台每 3.5 秒查询最近 50 个聊天及置顶聊天，并订阅活跃聊天状态。程序仅保留状态判断所需字段，丢弃收到的对话正文与工具参数，不上传到外部服务器。
 
 当前适配在 Codex Windows **26.1106.6628.0** 上验证，使用桌面应用内部管道协议，Codex 更新后可能需要调整。远程任务状态取决于 Codex 是否连接对应主机。本项目为独立社区程序，与 OpenAI 无隶属关系。
 
 Rust 版通过同一个 EXE 的后台监听模式等待 Codex，再启动桌宠窗口。Electron 版的 `CodexPetHost.exe` 是无窗口、无托盘的 .NET 监听程序。两者均无需修改 Codex 安装文件或快捷方式。
+
+### Codex CLI
+
+两版后台监听器也会识别当前 Windows 会话中的原生 `codex.exe`，排除 `app-server`、`exec-server` 等后台服务；无需安装或打开 Desktop。Desktop 与 CLI 同时运行时优先跟随 Desktop。需要优先使用 CLI 时，先退出当前桌宠及后台监听，再运行：
+
+```powershell
+# Rust 单 EXE
+.\CodexPetRust.exe --cli
+# Electron 安装包中的后台监听器
+.\CodexPetHost.exe --cli
+# Electron 源码开发模式（手动启动/退出窗口）
+npm start -- --cli
+```
+
+CLI 模式每 3.5 秒增量读取 `$env:CODEX_HOME/sessions/`，未设置时使用 `$HOME/.codex/sessions/`。自定义 `CODEX_HOME` 时，请在同一个 PowerShell 环境启动监听器与 CLI；登录启动的监听器不会继承其他终端中临时设置的变量。识别 `source: cli/exec` 的本地会话；`source: vscode` 还须具有已知 CLI `originator`（`codex-tui`、`codex_cli_rs` 或 `codex_exec`）才会纳入。Desktop 的 `source: vscode, originator: Codex Desktop`、其他 IDE 来源及子代理日志会被忽略。不修改 Codex 配置、不额外启动模型请求。源码开发模式从窗口启动时开始观察；后台监听模式从跟随的 CLI 进程启动时间开始观察。
+
+任务状态来自日志中的开始、完成和中断事件。打开额度卡片或点击刷新时，桌宠通过 CLI 自带的 `app-server` 调用只读 `account/rateLimits/read` 接口，获取当前账号额度、重置时间及可用重置次数；没有聊天日志也能读取。每次查询只进行协议初始化及额度读取，不创建聊天、不运行模型、不消耗重置次数，完成或超时后结束查询进程。接口未提供次数时显示“重置次数 —”，不会当作零；刷新失败时标记缓存。该接口需要 CLI 的 ChatGPT 登录，API Key 账号可能不提供此类额度。
+
+后台监听器会将实际 CLI 可执行文件路径交给桌宠，兼容通过 npm 等方式安装且原生 EXE 不在 PATH 中的情况。手动启动时可设置 `CODEX_CLI_PATH` 或使用 `--codex-exe C:\路径\codex.exe` 指定原生 EXE，默认查找 PATH 中的 `codex.exe`。
+
+当前 CLI 的审批请求、运行错误等事件通常不会持久化，因此这些阶段可能继续显示工作状态，不能提供 Desktop 模式同等精度的等待/异常提示。日志被禁用、使用临时会话或 WSL/远程 CLI 时，Windows 原生监听器无法获取对应任务状态，但本机已登录账号的额度读取不依赖这些日志。
+
+日志没有进程与线程的一一映射：同一 `CODEX_HOME` 中、跟随进程启动之后的 CLI 会话会合并显示；强制终止另一个并行 CLI 可能留下未完成状态，可右键“重新连接”重新开始观察。初次读取不会播放历史完成动画；单次读取与启动回读均限制为每文件 1 MiB，最多观察最近 50 个会话，不保留正文、命令参数或工具输出。
 
 ## 开发与打包
 
@@ -50,7 +73,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-rust.ps1
 
 EXE 图标来自“元气挥手”第 48 帧笑脸头像，内嵌 16–256 像素的十种尺寸。来源记录见 [assets/ICON_SOURCE.json](assets/ICON_SOURCE.json)。
 
-应用逻辑集中在 [rust/codex_pet.rs](rust/codex_pet.rs)，构建依赖由 `rust/Cargo.toml` 和 `rust/Cargo.lock` 记录。脚本生成内嵌素材包、运行 16 项 Rust 测试，并输出单个 EXE 与 SHA-256 校验文件。
+应用逻辑集中在 [rust/codex_pet.rs](rust/codex_pet.rs)，构建依赖由 `rust/Cargo.toml` 和 `rust/Cargo.lock` 记录。脚本生成内嵌素材包、运行 20 项 Rust 测试，并输出单个 EXE 与 SHA-256 校验文件。
 
 Electron 版需要 Node.js 24+；生成 ZIP 还需要 Python 3。编译宿主使用 Windows 自带的 .NET Framework C# 编译器：
 
@@ -66,7 +89,7 @@ python scripts/archive.py
 
 源码在 `src/`，测试在 `tests/`，原生宿主源码在 `native/`。完整 92 张原始精灵图随仓库提供；需要重新下载时，在 PowerShell 7 中运行 `./scripts/download-assets.ps1`，脚本固定到已核对的上游版本。
 
-验证范围及版本修复记录见 [Rust 版记录](docs/rust.md#接入与验证) 和 [Electron 版记录](docs/verification.md)。GitHub Actions 分别运行 16 项 Rust 测试及单 EXE 编译、20 项 Electron 版测试；这些检查不代替真实 Codex、Windows 登录或跨机器验证。
+验证范围及版本修复记录见 [Rust 版记录](docs/rust.md#接入与验证) 和 [Electron 版记录](docs/verification.md)。GitHub Actions 分别运行 20 项 Rust 测试及单 EXE 编译、33 项 Electron 版测试及 32 个 CLI 宿主进程识别场景；两种实现共用会话来源和命令行反例，覆盖 Desktop 来源隔离、提示词中的服务名称、选项值、Windows 引号与中文参数。这些检查不代替真实 Codex、Windows 登录或跨机器验证。
 
 ## 素材来源与许可说明
 

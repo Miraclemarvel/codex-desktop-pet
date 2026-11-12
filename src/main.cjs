@@ -6,6 +6,7 @@ const {STYLES,normalize:normalizeAppearance}=require('./appearance.js');
 const {WINDOW_SIZE,constrainWindow,DragSession}=require('./drag.cjs');
 const fs=require('node:fs'),path=require('node:path');
 const {DesktopBridge}=require('./bridge.cjs');
+const {CliBridge}=require('./cli.cjs');
 const ROOT=path.resolve(__dirname,'..'),{width:WIDTH,height:HEIGHT}=WINDOW_SIZE;
 const dragTesting=process.argv.includes('--drag-smoke');
 app.setName('Codex Desktop Pet');app.setAppUserModelId('local.codex.desktop.pet');
@@ -21,7 +22,7 @@ let drag=null,ignore=true,paused=false,ready=false,latest={state:'idle',connecte
 function send(name,value){if(win&&!win.isDestroyed()&&ready)win.webContents.send(name,value);}
 function save(){try{fs.writeFileSync(settingsPath,JSON.stringify(settings,null,2));}catch{}}
 function hostPath(){return app.isPackaged?path.join(path.dirname(process.execPath),'CodexPetHost.exe'):path.join(ROOT,'native','CodexPetHost.exe');}
-function startHost(){if(isolatedData)return;const exe=hostPath();if(!fs.existsSync(exe))throw Error('CodexPetHost.exe is missing');const child=spawn(exe,[],{windowsHide:true,detached:true,stdio:'ignore'});child.on('error',e=>console.error('host:',e.message));child.unref();}
+function startHost(){if(isolatedData)return;const exe=hostPath();if(!fs.existsSync(exe))throw Error('CodexPetHost.exe is missing');const child=spawn(exe,process.argv.includes('--cli')?['--cli']:[],{windowsHide:true,detached:true,stdio:'ignore'});child.on('error',e=>console.error('host:',e.message));child.unref();}
 function stopHost(){const exe=hostPath();if(fs.existsSync(exe))execFileSync(exe,['--stop'],{windowsHide:true,timeout:5000,stdio:'ignore'});}
 function setStartup(enabled,launch=true){app.setLoginItemSettings({openAtLogin:enabled,path:hostPath(),args:[]});settings.autoStart=enabled;save();if(launch){if(enabled)startHost();else stopHost();}}
 function setMotion(value){settings.motion=normalizeMode(value);save();send('settings',settings);}
@@ -65,7 +66,7 @@ async function start(){
  win.loadFile(path.join(__dirname,'index.html'));
  win.on('closed',()=>{win=null;app.quit();});
  win.on('blur',()=>{if(drag)finishDrag(drag.token,true);});
- bridge=new DesktopBridge();bridge.on('state',s=>{latest=s;send('state',s);if(s.connected&&!isolatedData){if(!win.isVisible())win.showInactive();if(!win.isAlwaysOnTop())win.setAlwaysOnTop(true,'pop-up-menu');}else if(!s.connected)win.hide();});bridge.on('issue',m=>send('connection-issue',m));bridge.start();
+ startBridge(process.argv);
  setInterval(()=>{if(win&&drag&&!dragTesting)sampleDrag(screen.getCursorScreenPoint());},16);
  setInterval(()=>{if(latest.state==='complete'){latest=bridge.snapshot();send('state',latest);}},1000);
  if(process.argv.includes('--install'))setStartup(true);
@@ -77,6 +78,12 @@ async function start(){
  if(dragTesting)setTimeout(dragSmoke,5000);
  if(process.argv.includes('--appearance-smoke'))setTimeout(appearanceSmoke,5000);
  if(process.argv.includes('--transition-smoke'))setTimeout(transitionSmoke,5000);
+}
+function startBridge(args){
+ bridge?.stop();
+ const sinceIndex=args.indexOf('--codex-since'),since=sinceIndex>=0?Number(args[sinceIndex+1]):Date.now();
+ const exeIndex=args.indexOf('--codex-exe'),executable=exeIndex>=0?args[exeIndex+1]:undefined;
+ bridge=args.includes('--cli')?new CliBridge({since:Number.isFinite(since)?since:Date.now(),executable}):new DesktopBridge();bridge.on('state',s=>{latest=s;send('state',s);if(s.connected&&!isolatedData){if(!win.isVisible())win.showInactive();if(!win.isAlwaysOnTop())win.setAlwaysOnTop(true,'pop-up-menu');}else if(!s.connected)win.hide();});bridge.on('issue',m=>send('connection-issue',m));bridge.start();
 }
 function clamp(p){const area=screen.getDisplayNearestPoint({x:Math.round(p.x+WIDTH/2),y:Math.round(p.y+HEIGHT-150)}).workArea;return constrainWindow(p,area);}
 function moveWindow(bounds){win.setBounds({x:bounds.x,y:bounds.y,width:WIDTH,height:HEIGHT},false);}
@@ -110,7 +117,7 @@ ipcMain.on('drag-begin',(_e,token)=>beginDrag(token));
 ipcMain.handle('drag-end',(_e,{token,cancelled}={})=>finishDrag(token,cancelled===true));
 ipcMain.on('menu',()=>menu().popup({window:win}));
 ipcMain.on('hide-panel',()=>{});
-app.on('second-instance',(_event,argv)=>{if(argv.includes('--disable-autostart')){setStartup(false);app.quit();return;}if(argv.includes('--quit')){app.quit();return;}if(argv.includes('--install-config')){setStartup(true,false);return;}const nextOwner=ownerPid(argv);if(nextOwner){codexPid=nextOwner;return;}if(argv.includes('--restore-position')){restorePosition();return;}if(argv.includes('--diagnose')){diagnose();return;}if(argv.includes('--install'))setStartup(true);if(latest.connected){win?.showInactive();send('open-panel');}});
+app.on('second-instance',(_event,argv)=>{if(argv.includes('--disable-autostart')){setStartup(false);app.quit();return;}if(argv.includes('--quit')){app.quit();return;}if(argv.includes('--install-config')){setStartup(true,false);return;}const nextOwner=ownerPid(argv);if(nextOwner){codexPid=nextOwner;if(argv.includes('--cli')!==(bridge instanceof CliBridge)){usage=null;startBridge(argv);}return;}if(argv.includes('--restore-position')){restorePosition();return;}if(argv.includes('--diagnose')){diagnose();return;}if(argv.includes('--install'))setStartup(true);if(latest.connected){win?.showInactive();send('open-panel');}});
 app.on('before-quit',()=>bridge?.stop());
 app.on('window-all-closed',()=>app.quit());
 async function smoke(){try{await win.webContents.executeJavaScript('window.petTest.openPanel()');await new Promise(r=>setTimeout(r,2500));const dir=process.env.PET_EVIDENCE_DIR||path.join(ROOT,'outputs');fs.mkdirSync(dir,{recursive:true});const page=await win.capturePage();fs.writeFileSync(path.join(dir,'desktop-pet-smoke.png'),page.toPNG());const ui=await win.webContents.executeJavaScript('window.petTest.inspect()');fs.writeFileSync(path.join(dir,'smoke.json'),JSON.stringify({state:latest,usage,ui,animationCount:animations.length,autoStart:app.getLoginItemSettings({path:hostPath(),args:[]}).openAtLogin,tray:false,codexPid,versions:process.versions},null,2));}catch(e){console.error(e);process.exitCode=1;}finally{app.quit();}}

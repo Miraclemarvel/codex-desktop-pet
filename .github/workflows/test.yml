@@ -19,6 +19,10 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm test
+      - run: npm run build:host
+      - name: Check CLI process discovery
+        shell: powershell
+        run: ./tests/cli-host.test.ps1
 
   rust:
     name: Rust single EXE

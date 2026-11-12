@@ -1,0 +1,14 @@
+[
+  {"metadata":{"source":"cli"},"expected":true},
+  {"metadata":{"source":"exec","originator":"codex_exec"},"expected":true},
+  {"metadata":{"source":"vscode","originator":"codex-tui"},"expected":true},
+  {"metadata":{"source":"vscode","originator":"codex_cli_rs"},"expected":true},
+  {"metadata":{"source":"vscode","originator":"codex_exec"},"expected":true},
+  {"metadata":{"source":"vscode","originator":"Codex Desktop"},"expected":false},
+  {"metadata":{"source":"vscode","originator":"codex_vscode"},"expected":false},
+  {"metadata":{"source":"vscode","originator":"unknown-client"},"expected":false},
+  {"metadata":{"source":"vscode"},"expected":false},
+  {"metadata":{"source":"mcp","originator":"codex-tui"},"expected":false},
+  {"metadata":{"source":{"subagent":{"thread_spawn":{}}},"originator":"codex-tui"},"expected":false},
+  {"metadata":{},"expected":false}
+]
