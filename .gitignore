@@ -12,3 +12,4 @@ native/*.exe
 *.bak
 .DS_Store
 Thumbs.db
+rust/target/

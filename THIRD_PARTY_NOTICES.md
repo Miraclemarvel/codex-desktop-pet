@@ -13,7 +13,13 @@
 
 ## Electron
 
-Electron 40.10.6 采用 MIT 许可。完整运行时及 Chromium 第三方许可证随 Windows 发行包中的 `LICENSE`、`LICENSES.chromium.html` 一并提供。
+Electron 版使用 Electron 40.10.6，采用 MIT 许可。完整运行时及 Chromium 第三方许可证随 Electron 版 Windows 发行包中的 `LICENSE`、`LICENSES.chromium.html` 一并提供。Rust 单 EXE 版不包含或使用 Electron。
+
+## Rust 单 EXE 版
+
+Rust 版使用 Windows 自带的 Win32 API，以及 `windows-sys`、`serde`、`serde_json`、`image-webp`、`miniz_oxide` 等依赖。各依赖的实际版本、许可标识及完整许可文本在打包时从锁定依赖中收集，并嵌入 EXE；运行 `CodexPetRust.exe --licenses 输出文件路径` 可导出。软件依赖的许可不覆盖角色和动画素材。
+
+素材只经过可逆的 zlib 封装，解压后恢复原始 WebP 文件字节，不重新编码或降低动画画质。运行时直接从 EXE 读取素材，不释放外部图片、DLL、Electron 或 WebView 文件。
 
 ## Codex 与 OpenAI
 
