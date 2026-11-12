@@ -1,0 +1,17 @@
+{
+  "name": "codex-desktop-pet",
+  "version": "0.4.1",
+  "private": true,
+  "description": "GPT white dragon desktop companion for Codex on Windows",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.cjs",
+    "probe": "node scripts/probe.mjs",
+    "pack": "npm run build:host && node scripts/package.cjs",
+    "build:host": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-host.ps1"
+  },
+  "devDependencies": {
+    "electron": "^40.0.0"
+  }
+}

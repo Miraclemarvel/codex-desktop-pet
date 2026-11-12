@@ -1,0 +1,16 @@
+const fs=require('node:fs'),path=require('node:path');
+const root=path.resolve(__dirname,'..');const release=path.join(root,'outputs','release','CodexPet');
+if(fs.existsSync(release))throw Error('Release exists; use a new release folder or remove the verified build folder explicitly.');
+fs.mkdirSync(release,{recursive:true});fs.cpSync(path.join(root,'node_modules/electron/dist'),release,{recursive:true});
+fs.renameSync(path.join(release,'electron.exe'),path.join(release,'CodexPet.exe'));
+fs.copyFileSync(path.join(root,'native','CodexPetHost.exe'),path.join(release,'CodexPetHost.exe'));
+const app=path.join(release,'resources','app');fs.mkdirSync(app,{recursive:true});
+for(const dir of ['src','assets'])fs.cpSync(path.join(root,dir),path.join(app,dir),{recursive:true});
+fs.mkdirSync(path.join(app,'native'));fs.copyFileSync(path.join(root,'native','CodexPetHost.cs'),path.join(app,'native','CodexPetHost.cs'));
+const pkg=require('../package.json');fs.writeFileSync(path.join(app,'package.json'),JSON.stringify({name:pkg.name,version:pkg.version,main:pkg.main,description:pkg.description},null,2));
+for(const name of ['README.md','THIRD_PARTY_NOTICES.md'])fs.copyFileSync(path.join(root,name),path.join(release,name));
+fs.cpSync(path.join(root,'docs'),path.join(release,'docs'),{recursive:true});
+fs.mkdirSync(path.join(release,'scripts'));for(const name of ['install.ps1','disable-autostart.ps1'])fs.copyFileSync(path.join(root,'scripts',name),path.join(release,'scripts',name));
+fs.writeFileSync(path.join(release,'安装并启动.cmd'),'@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\\install.ps1"\r\n','utf8');
+fs.writeFileSync(path.join(release,'关闭自动启动.cmd'),'@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\\disable-autostart.ps1"\r\n','utf8');
+console.log(release);

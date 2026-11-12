@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'"><title>Codex 白龙桌宠</title><link rel="stylesheet" href="style.css"></head>
+<body>
+ <main id="stage">
+  <section id="panel" class="panel" hidden aria-label="Codex 剩余额度">
+   <button id="close" aria-label="关闭额度卡片">×</button>
+   <div id="quota" aria-live="polite"></div>
+   <button id="refresh" title="刷新额度" aria-label="刷新额度">↻</button>
+  </section>
+  <div id="pet-wrap"><canvas id="sprite" width="640" height="360" role="button" tabindex="0" aria-label="白龙桌宠，点击查看剩余额度，拖动调整位置"></canvas></div>
+  <button id="badge" title="点击查看额度 · 右键更多选项"><span id="dot"></span><span id="status">连接 Codex…</span></button>
+ </main><script src="motion.js"></script><script src="appearance.js"></script><script src="playback.js"></script><script src="renderer.js"></script>
+</body></html>

@@ -1,0 +1,184 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Security.Principal;
+using System.Threading;
+
+// A windowless launcher. The Electron pet only runs for a live Codex session.
+internal static class CodexPetHost
+{
+    static string Option(string[] args, string name, string fallback)
+    {
+        int i = Array.IndexOf(args, name);
+        return i >= 0 && i + 1 < args.Length ? args[i + 1] : fallback;
+    }
+    static bool Alive(Process p) { try { return p != null && !p.HasExited; } catch { return false; } }
+    static string Quote(string s) { return "\"" + s.Replace("\"", "\\\"") + "\""; }
+    static string Json(string s) { return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", " ").Replace("\n", " ") + "\""; }
+    static string Key(Process p) { return p.Id + ":" + p.StartTime.ToUniversalTime().Ticks; }
+
+    static Process FindCodex()
+    {
+        int session = Process.GetCurrentProcess().SessionId;
+        foreach (string name in new string[] { "ChatGPT", "Codex" })
+        {
+            foreach (Process p in Process.GetProcessesByName(name))
+            {
+                try
+                {
+                    string exe = p.MainModule.FileName;
+                    if (p.SessionId == session && p.MainWindowHandle != IntPtr.Zero &&
+                        exe.IndexOf("\\OpenAI.Codex_", StringComparison.OrdinalIgnoreCase) >= 0)
+                        return p;
+                }
+                catch { }
+                p.Dispose();
+            }
+        }
+        return null;
+    }
+
+    static Process ExistingPet(string exe)
+    {
+        foreach (Process p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(exe)))
+        {
+            try
+            {
+                if (String.Equals(p.MainModule.FileName, exe, StringComparison.OrdinalIgnoreCase) &&
+                    p.MainWindowTitle == "Codex 白龙桌宠") return p;
+            }
+            catch { }
+            p.Dispose();
+        }
+        return null;
+    }
+
+    static void StopPet(Process pet)
+    {
+        if (!Alive(pet)) return;
+        try
+        {
+            pet.CloseMainWindow();
+            // The pet also checks its exact owner PID every second.
+            if (!pet.WaitForExit(2500) && Alive(pet)) pet.Kill();
+        }
+        catch { }
+    }
+
+    static void State(string file, string status, Process owner, Process pet, string error)
+    {
+        if (String.IsNullOrEmpty(file)) return;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file, "{\"status\":" + Json(status) +
+                ",\"hostPid\":" + Process.GetCurrentProcess().Id +
+                ",\"codexPid\":" + (Alive(owner) ? owner.Id.ToString() : "null") +
+                ",\"petPid\":" + (Alive(pet) ? pet.Id.ToString() : "null") +
+                ",\"error\":" + (error == null ? "null" : Json(error)) + "}");
+        }
+        catch { }
+    }
+
+    [STAThread]
+    static int Main(string[] args)
+    {
+        string sessionName = Option(args, "--session", "default");
+        string identity = WindowsIdentity.GetCurrent().User.Value + "." + sessionName;
+        string stopName = @"Local\CodexDesktopPetHost.Stop." + identity;
+        if (Array.IndexOf(args, "--stop") >= 0)
+        {
+            try { using (EventWaitHandle stop = EventWaitHandle.OpenExisting(stopName)) stop.Set(); }
+            catch (WaitHandleCannotBeOpenedException) { }
+            return 0;
+        }
+        string stateFile = Option(args, "--state-path", Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Codex Desktop Pet", "host-state.json"));
+        if (Array.IndexOf(args, "--probe") >= 0)
+        {
+            using (Process owner = FindCodex()) State(stateFile, "probe", owner, null, null);
+            return 0;
+        }
+        bool first;
+        using (Mutex mutex = new Mutex(true, @"Local\CodexDesktopPetHost." + identity, out first))
+        {
+            if (!first) return 0;
+            using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.ManualReset, stopName))
+            {
+                string petExe = Path.GetFullPath(Option(args, "--pet-exe", Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CodexPet.exe")));
+                string testData = Option(args, "--pet-user-data", null);
+                int fixedPid;
+                Int32.TryParse(Option(args, "--codex-pid", "0"), out fixedPid);
+                Process owner = null, pet = null;
+                string ownerKey = null;
+                bool dismissed = false;
+                State(stateFile, "waiting", null, null, null);
+                // Let an installer release Electron's single-instance lock first.
+                if (stop.WaitOne(600)) return 0;
+                try
+                {
+                    while (!stop.WaitOne(0))
+                    {
+                        if (!Alive(owner))
+                        {
+                            StopPet(pet);
+                            if (pet != null) pet.Dispose();
+                            if (owner != null) owner.Dispose();
+                            pet = null; owner = null;
+                            try { owner = fixedPid > 0 ? Process.GetProcessById(fixedPid) : FindCodex(); } catch { }
+                            if (!Alive(owner))
+                            {
+                                State(stateFile, "waiting", null, null, null);
+                                if (fixedPid > 0) break;
+                                if (stop.WaitOne(2000)) break;
+                                continue;
+                            }
+                            string next = Key(owner);
+                            if (next != ownerKey) { ownerKey = next; dismissed = false; }
+                        }
+                        if (pet != null && !Alive(pet))
+                        {
+                            // A manual exit lasts for this Codex session; do not reopen it.
+                            dismissed = true;
+                            pet.Dispose(); pet = null;
+                            State(stateFile, "dismissed", owner, null, null);
+                        }
+                        if (pet == null && !dismissed)
+                        {
+                            try
+                            {
+                                string childArgs = "--codex-pid " + owner.Id;
+                                if (testData != null) childArgs += " --test-user-data " + Quote(testData);
+                                ProcessStartInfo info = new ProcessStartInfo(petExe, childArgs);
+                                info.UseShellExecute = false; info.CreateNoWindow = true;
+                                info.WindowStyle = ProcessWindowStyle.Hidden;
+                                info.WorkingDirectory = Path.GetDirectoryName(petExe);
+                                pet = Process.Start(info);
+                                if (pet.WaitForExit(800))
+                                {
+                                    pet.Dispose(); pet = ExistingPet(petExe);
+                                    if (pet == null) dismissed = true;
+                                }
+                                State(stateFile, dismissed ? "dismissed" : "running", owner, pet, null);
+                            }
+                            catch (Exception e)
+                            {
+                                State(stateFile, "error", owner, null, e.Message);
+                                if (stop.WaitOne(5000)) break;
+                            }
+                        }
+                        if (stop.WaitOne(1000)) break;
+                    }
+                }
+                finally
+                {
+                    if (!Alive(owner)) StopPet(pet);
+                    State(stateFile, "stopped", owner, pet, null);
+                    if (pet != null) pet.Dispose();
+                    if (owner != null) owner.Dispose();
+                }
+            }
+        }
+        return 0;
+    }
+}

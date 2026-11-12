@@ -1,0 +1,469 @@
+{
+  "repository": "https://github.com/hunmer/aboutme-pets",
+  "author": "hunmer",
+  "directory": "pets/gpt",
+  "commit": "4f8e9e327bad8c137d98d8ec591712af920de8b7",
+  "animations": 92,
+  "files": [
+    {
+      "path": "spritesheet/三球抛接.webp",
+      "upstreamGitBlob": "e828d0e34a7a3088f1560014d502c450693f7206",
+      "sha256": "f593691b25e6e0d836f25c702ac8af03183182eb3f5fdf33ec6ae15646bae85d"
+    },
+    {
+      "path": "spritesheet/下五子棋.webp",
+      "upstreamGitBlob": "04ba0825d77eb78a28dc18f8a66b6cab61df8d27",
+      "sha256": "8380f0273633ad0b4176a573a82a7e2926bb58138fcb7d1b7637edd9c32440bd"
+    },
+    {
+      "path": "spritesheet/东张西望.webp",
+      "upstreamGitBlob": "1bb7461e0ae2f148e33e977909e7f7a6baef8ca4",
+      "sha256": "a8d6351db234abe2fa9a5ce8159fa50d5dfcce948cb10bed3946c4c474957dc8"
+    },
+    {
+      "path": "spritesheet/中秋赏月吃月饼.webp",
+      "upstreamGitBlob": "d535148ffd942e6cdb98d094f49f144260aeb856",
+      "sha256": "6f66a67f1521da8a06c396fd314fb4b269b31a0cb91e2b86a036fe1f2f9a8020"
+    },
+    {
+      "path": "spritesheet/优雅提裙旋舞.webp",
+      "upstreamGitBlob": "01ddc9a235d9988b2e3b5e97229431a1ed9e0f33",
+      "sha256": "a6009b057cc6d4915eaf18369c4a53b6691e5539c2ef3fe166c30e6f334cd2b4"
+    },
+    {
+      "path": "spritesheet/偷吃零食被抓住.webp",
+      "upstreamGitBlob": "6183c4006f937d93074525ec92aacca3789ffa7e",
+      "sha256": "bc86721e0895ead3ab552fd23cbe279379b6be71722291ae8bde1da6417971f0"
+    },
+    {
+      "path": "spritesheet/傲娇生气.webp",
+      "upstreamGitBlob": "d74e206f85d4fe39b2db316a79c1ae1e700f275d",
+      "sha256": "e2489054f570736e264c8e95c26c40ec5b4fc17e1a7e60e8846293e1dbcae92b"
+    },
+    {
+      "path": "spritesheet/元气挥手.webp",
+      "upstreamGitBlob": "66d507ece1000dc937731b33c82d873b562b0b6f",
+      "sha256": "752f8cf7e0bff29963558c05f1d6e3487fdfcf3d9655e76fb2f04e8dc70357b9"
+    },
+    {
+      "path": "spritesheet/写代码.webp",
+      "upstreamGitBlob": "7b46fc0fe285fc02b0231487b4cff80c223c41b8",
+      "sha256": "56610a0d22e8d771e77be08caaf3934f4dfe075deb2a23c49895c40d50936ea3"
+    },
+    {
+      "path": "spritesheet/写吉祥纹.webp",
+      "upstreamGitBlob": "563c6dd5dff0af551b58c9ef01e59545f3ea6c41",
+      "sha256": "e0eb8ab9d06f4d88292cf2b43af06b8b61c92f943c5a339d6a38dbb9af2d6a9d"
+    },
+    {
+      "path": "spritesheet/凭空生花.webp",
+      "upstreamGitBlob": "9278887a991935f6d6f656504a0b5ce71fcad96a",
+      "sha256": "66cb6d30e8fd368dd6e907cc15a387c4f647fe308bd6b215e069d679819c4373"
+    },
+    {
+      "path": "spritesheet/分文不剩.webp",
+      "upstreamGitBlob": "54f5769c9d69e951c1ddc1d9d38aa1dc0293e5aa",
+      "sha256": "5c542df0ee687be243d260b32bf317052061912b5bd34209c4072b28574aa0bb"
+    },
+    {
+      "path": "spritesheet/动物环绕.webp",
+      "upstreamGitBlob": "05b7cf45905f4b0369c50fc0a46c4531faaeb97a",
+      "sha256": "bf55408bed4c279545e2ca30ab28272b09baa16db717d3e2152c0e6a02f9dcaa"
+    },
+    {
+      "path": "spritesheet/原地专心玩魔方.webp",
+      "upstreamGitBlob": "d96f01efbe15f8ae2b9784b496fe0ca2006ed10f",
+      "sha256": "797f84a2b738b178a782c73e39f3899784ea7052fedd7695c7ad9e663c0482a2"
+    },
+    {
+      "path": "spritesheet/原地小憩沉眠.webp",
+      "upstreamGitBlob": "f5a7e25e6dac449524e41b349e8799bf1576d598",
+      "sha256": "86a2f748a6996cb7334892f79823d4460535c328396746dd77c6392c0f1ae92c"
+    },
+    {
+      "path": "spritesheet/原地左转奔跑.webp",
+      "upstreamGitBlob": "c25bdc559dbb2b2153c7619794966a436a109a13",
+      "sha256": "a0645d48d10f4fdcaddd7db9e034657505264b0ed88d2d6817c54173ac386c4f"
+    },
+    {
+      "path": "spritesheet/原地敲击桌面互动.webp",
+      "upstreamGitBlob": "e1173ad7d050769473cfe8cd15fc6089b1053c60",
+      "sha256": "e4c3fc1a7431d43ec862df3ada0c03d908354b79a2aeab9cfa209f9638401ab7"
+    },
+    {
+      "path": "spritesheet/原地漂浮踏步.webp",
+      "upstreamGitBlob": "f75cf2fa944b9937b46a244624985dc95dda2b85",
+      "sha256": "bbc71452c56097dc935ec453ad2ffc674ca83981e7894bd3214ba256ec5d48c0"
+    },
+    {
+      "path": "spritesheet/原地跳跃抓碎头顶物品.webp",
+      "upstreamGitBlob": "b6658ce0ff28526c3b6b72e3153a6bc8cac0830d",
+      "sha256": "5c22d195c0c3b0bab99c2d9c8673848cf5b1f71516e21b75735c0b94624a9c4c"
+    },
+    {
+      "path": "spritesheet/原地踱步张望.webp",
+      "upstreamGitBlob": "429d861bd6e87ef3ca55f60323459324478ec501",
+      "sha256": "3b05e967381194ad386cd10669f883857254b84f8b05e3f4358a101b0b2995b8"
+    },
+    {
+      "path": "spritesheet/原地蹲下玩玩具汽车.webp",
+      "upstreamGitBlob": "027dba50edb35d7ddda5204bf820c312ddadcdfd",
+      "sha256": "5aa9c98493164455d49e248584a9446113829587576fffee62b4777b11d70b2f"
+    },
+    {
+      "path": "spritesheet/原地重力下蹲压缩.webp",
+      "upstreamGitBlob": "9251721ba83984c80664bcda57ee3379df47b0df",
+      "sha256": "05d8028d99baea8a5e658e70fa25f797472230483fae6f0c6f6095f21669b342"
+    },
+    {
+      "path": "spritesheet/发呆碎碎念.webp",
+      "upstreamGitBlob": "d65b893ee720ed425a594d80417ed75bf38616ae",
+      "sha256": "8c6d7e855a224ea6ad972734d6d03149c0255c817d891e688abca24ecc027372"
+    },
+    {
+      "path": "spritesheet/变鸽子.webp",
+      "upstreamGitBlob": "f78ced686f3308eccd0326b80fdbc552de856e8a",
+      "sha256": "e448feaeb86fa8425fde29413c863ed7aa213f5e398c12d1d1287125dc08c595"
+    },
+    {
+      "path": "spritesheet/可爱宅舞.webp",
+      "upstreamGitBlob": "83b6990f7dc4f0bf89b5e2f7a3d03972f5155814",
+      "sha256": "41b5a874b7ddf1e04dc1a88f5490647ce85a539bc017accb23b9da1c3406dc1b"
+    },
+    {
+      "path": "spritesheet/吃Token.webp",
+      "upstreamGitBlob": "6ccb750431ae918ee27653234efbe35d6fcd3b11",
+      "sha256": "3da61e9a0de2682afe7731790b3ee803acd4695b6bf850f7b8006074648bba95"
+    },
+    {
+      "path": "spritesheet/吃冰淇淋融化.webp",
+      "upstreamGitBlob": "6fe4068ca2045b1c4305058ca6b97f6e9b266b25",
+      "sha256": "6c95b56a34921f2b5e2f507eccd9c9a679b09a1e2311873b9b6f2221e20ef6e2"
+    },
+    {
+      "path": "spritesheet/吃午餐.webp",
+      "upstreamGitBlob": "5d4ba31b593e4b81cdb1d5c28000163888c08b94",
+      "sha256": "73c78c78b639780af7838c0ea857fc27c3e16dcf738fe6b83cafaafa781bea5e"
+    },
+    {
+      "path": "spritesheet/吃大闸蟹.webp",
+      "upstreamGitBlob": "91858c7f5ef1379ad2ce0907a762f8e12d412758",
+      "sha256": "071fb801e5f73ed3db0c5438a707b793d0ab250a498d58fc29d8f908e1a484d5"
+    },
+    {
+      "path": "spritesheet/吃年糕.webp",
+      "upstreamGitBlob": "e1be011fd5a3b22eb4c061422ee25aedfe1cfcf8",
+      "sha256": "d63cf7195feb7cfa60a6547359becfa87efcbd74f46d02528e97da95d9d5f69e"
+    },
+    {
+      "path": "spritesheet/吃早餐.webp",
+      "upstreamGitBlob": "813efa2301da25283e817f6e227cc6f2eaca7233",
+      "sha256": "218f8c6563ed8e3672a849baf7c68810c5a37bbb9ed5988c682877db1af14338"
+    },
+    {
+      "path": "spritesheet/吃晚餐.webp",
+      "upstreamGitBlob": "7377527139b89ede037de0647351a419eff991d8",
+      "sha256": "5972b63952a0b740e0589a53a5102bb438b3c73fc485c6ff3d34e958c7e9a47c"
+    },
+    {
+      "path": "spritesheet/吃汤圆.webp",
+      "upstreamGitBlob": "ceb4ada5bd0576a6daf92b59c709454c2012da24",
+      "sha256": "85d5b6fd176a4010fd52f00f8d03a4847a0fa9570fa7b9b15b14ea0527df5558"
+    },
+    {
+      "path": "spritesheet/吃白饭.webp",
+      "upstreamGitBlob": "267d8e7571b0d4c8c011b420ced08cd2377307e8",
+      "sha256": "50204753b90b11450f65ee486c3b811a196cf8f4869604bf7d08bc5ddc62d738"
+    },
+    {
+      "path": "spritesheet/吃粽子.webp",
+      "upstreamGitBlob": "b53692feb9de1519db1459745defafda0822559e",
+      "sha256": "9b8a82ecf3137708b9b74d416ca4baa87a535d16e4c6a785647d2e95d3b2ffc7"
+    },
+    {
+      "path": "spritesheet/吃腊八粥.webp",
+      "upstreamGitBlob": "e3df4815c7348f96092d902f5dd6774700a759a5",
+      "sha256": "facc6840f77473a8901c8fae413c78d9c6b521b9048314a0decbe0fc75e8f87e"
+    },
+    {
+      "path": "spritesheet/吃西瓜.webp",
+      "upstreamGitBlob": "16b123740b53f38539e5caaa267ae6e589c27b92",
+      "sha256": "7a80135a0f0fb59d8847b724adcaa0c71f588fd200f75ccde23744af4abb035d"
+    },
+    {
+      "path": "spritesheet/吃重阳糕.webp",
+      "upstreamGitBlob": "c5d5aa81b35264a731bdf6ae5c683fcab293b8ec",
+      "sha256": "88ea14534eff546dcbd55f85d0151840bf4381948a75989caf15f579faffd389"
+    },
+    {
+      "path": "spritesheet/吃长寿面.webp",
+      "upstreamGitBlob": "1ef8e845774d952ebe353a51271cab9b2b773839",
+      "sha256": "f63cca94aa819b55fca21ddd3ea256f3e813ba8ac76ca49e6baf292b4335cd5e"
+    },
+    {
+      "path": "spritesheet/吃青团.webp",
+      "upstreamGitBlob": "d2981ef2c23bbddd15ba47b3b014defadacda1db",
+      "sha256": "fa4cff3ce9d86c003e1fd3a068c619a764c087c90bf7f52e75e92b4708a87418"
+    },
+    {
+      "path": "spritesheet/吃饺子.webp",
+      "upstreamGitBlob": "198717b3367cda4da940fcecdeb9dfc6cb8a7db8",
+      "sha256": "2bb1207812328bf5c928dbfb1c3e8930cfa7201db85f906868cd15463e2d004b"
+    },
+    {
+      "path": "spritesheet/吹气球.webp",
+      "upstreamGitBlob": "108d9ab1d53affd4978a670aa287e19a267427ca",
+      "sha256": "46b06a0e47289f3e8deddf2ce8664fbd0c6cd8cc093b8e57928baec1988a03a1"
+    },
+    {
+      "path": "spritesheet/吹笛子.webp",
+      "upstreamGitBlob": "f584d0dd8964588dfa32d9c4cd120a66365c3ed9",
+      "sha256": "aeb2e5c1b7be63fef5bd27d67c1f3293a79f8c4c8eb8a7c593e64b28e8b8c456"
+    },
+    {
+      "path": "spritesheet/哈欠连天.webp",
+      "upstreamGitBlob": "f87eac7eb3762a1f3a2b2c49afaaa647cf0d782e",
+      "sha256": "9c5b808f2bbc6bc957e575992473aeef1532ed379758936c011fcbe1eb3833e0"
+    },
+    {
+      "path": "spritesheet/垂头叹气冒汗.webp",
+      "upstreamGitBlob": "df3bbbcbdd866c9fabcfde7f01faae7647427980",
+      "sha256": "f309cef2fc6828ac349f7e346a4280bbcd8cd8c5763159841794b30cc178face"
+    },
+    {
+      "path": "spritesheet/大口吃零食.webp",
+      "upstreamGitBlob": "b84a23d53d0e15369ee63e6a539ce014369928d1",
+      "sha256": "afcc619beb9f0c9238c5d1d379e0f92b2ffa19ec254737eeb7a0636b848da3f3"
+    },
+    {
+      "path": "spritesheet/害羞惊讶.webp",
+      "upstreamGitBlob": "1856d844621a4f74e229bc7b2d72a6cba19430ab",
+      "sha256": "238bca1c2e2cecd2d688d73e7ff6aee1686073ca0a74f6272f9e245bf85e619c"
+    },
+    {
+      "path": "spritesheet/对屏碎碎念.webp",
+      "upstreamGitBlob": "f6b96a16d2b6cbc24e55c491fd46de0188a470ae",
+      "sha256": "066b22a7f1c67f633ad797778794c7eec73e9f7358c9a35e48dbee4f688f51b2"
+    },
+    {
+      "path": "spritesheet/小提琴演奏.webp",
+      "upstreamGitBlob": "09e53928fb9623a7696f9c5441db86681284af58",
+      "sha256": "a9afd35b31d5253fa7b34114184363a2eee3a1ab0d1386e108fa18298ea071d5"
+    },
+    {
+      "path": "spritesheet/开心跃动.webp",
+      "upstreamGitBlob": "0222442a94f080d0279bea42e49be9a05176b749",
+      "sha256": "bcca84c494c8165d5503623199b6ea89f5dcaca3950195a29507acbfcb791c07"
+    },
+    {
+      "path": "spritesheet/待机呼吸休闲.webp",
+      "upstreamGitBlob": "5c29872283fa74f5a1b7274ed0674b64fa241095",
+      "sha256": "ab8c8aa040f063d97e84aa507d6d2d75b6079aad8fc13b0d09bae72f3d0cc3db"
+    },
+    {
+      "path": "spritesheet/忙碌点按.webp",
+      "upstreamGitBlob": "daad2d61db9a565e29c1e4581b51c1bd096c2a57",
+      "sha256": "0d689635acb8732454215571b20060c7cd09cbb5924de4cbe8d9f3504ff57e1e"
+    },
+    {
+      "path": "spritesheet/思考冒泡.webp",
+      "upstreamGitBlob": "d3444a55de6d81269ffd3de5c38b61164270926e",
+      "sha256": "76690f7423d58ee7a750dc6f0291e4baf4618d1c348363281f260fb081b8d52e"
+    },
+    {
+      "path": "spritesheet/悠闲哼歌.webp",
+      "upstreamGitBlob": "db9b99b2877d08f25ee8a0f77f1756224f87afc0",
+      "sha256": "f15e354b065eda6a608dcde9272230f03cb905c6a6ad651bdeea54551909cf7f"
+    },
+    {
+      "path": "spritesheet/打瞌睡被惊醒.webp",
+      "upstreamGitBlob": "d7681a1885db8c1184338f4a970419c79a29e946",
+      "sha256": "e4c8dc8d543cd8a5ac95abecb7b3fcc0a4c15739ce08eae6c924d1fbee713a4e"
+    },
+    {
+      "path": "spritesheet/抽陀螺.webp",
+      "upstreamGitBlob": "bfadf26c069a9e42327da289b7534197285011f3",
+      "sha256": "3ebd0a4e0aa5db61e572db5ae1e253237fe15fdc9d6fa2aea8efd6dda8041cb9"
+    },
+    {
+      "path": "spritesheet/拆礼物.webp",
+      "upstreamGitBlob": "ca48f89d0b22696fad376bf21718c61de2e38263",
+      "sha256": "1d985fe7f8ec4ed6bc48925afc6c2d3e6df02d0ce4d65e40824eda835ab1fc37"
+    },
+    {
+      "path": "spritesheet/挠痒咯咯笑.webp",
+      "upstreamGitBlob": "99038bbcf86d28e4d0d065217a823adb322f143e",
+      "sha256": "3d057271aeeb0c0d820ba17e90b156fbcf553f93bbf8ae8c7009064648a81ad8"
+    },
+    {
+      "path": "spritesheet/提裙屈膝礼仪.webp",
+      "upstreamGitBlob": "e1162b403c339cd585872ad5e17d4e73d5b8b704",
+      "sha256": "c43dedccda803adda227796c402fdc6f0175e502c39a59728640dca6716c8e8c"
+    },
+    {
+      "path": "spritesheet/插茱萸赏菊.webp",
+      "upstreamGitBlob": "d5a6a58049e3ea0282fc9e429ba0915af2d55b7d",
+      "sha256": "099312a144e0e1a06ebb2aa8a9a06689064122b95b38172f88de367df3d6e08f"
+    },
+    {
+      "path": "spritesheet/摇扇纳凉.webp",
+      "upstreamGitBlob": "0ff9f454fa3b26423a678635c1e379d20c2b3144",
+      "sha256": "1eba3c43bd640d9bc63c611ff696c7cab263c5332cc4dcc4ebe2fd18d295f87e"
+    },
+    {
+      "path": "spritesheet/撸猫.webp",
+      "upstreamGitBlob": "81f60b1e414e28f2dad09445d28fed658c7ad5fa",
+      "sha256": "7a4d227badcdb600db85621d817e760e4ae43c377d23417860677ce0b343c598"
+    },
+    {
+      "path": "spritesheet/收红包.webp",
+      "upstreamGitBlob": "1ed9b58ef2bf1ad93e9f68f88ed3a25efc27ba98",
+      "sha256": "742bb58249067330d6ef74552aee4c86096078e68b29c586c115a7195a1fb851"
+    },
+    {
+      "path": "spritesheet/放孔明灯.webp",
+      "upstreamGitBlob": "7817acc0b2db34092b5356a67ae49fcf5fd4d856",
+      "sha256": "b13dd0d218bd5231dced0e5db16ff5a1f67ca5a4d9e6751cf6a77604e12671da"
+    },
+    {
+      "path": "spritesheet/放河灯.webp",
+      "upstreamGitBlob": "237e86ec046aa77c2ec527fb65e5a87db7325b5d",
+      "sha256": "cd83786f29cf01262cb4f7c04f5992c2a5b675efacd8df5fd6b3fda9d978be9a"
+    },
+    {
+      "path": "spritesheet/放烟花.webp",
+      "upstreamGitBlob": "8f70642edcd4363bfa74609e844f3863f0ee46ab",
+      "sha256": "e5578be7d1f00b10fdb8547e5ae00dc511c5a069ef4505b2c17cc3b936f4711d"
+    },
+    {
+      "path": "spritesheet/数钱皱眉.webp",
+      "upstreamGitBlob": "1bc311097f3e6fea1058d3a05fee4f430f38a1e4",
+      "sha256": "e6ae79616e5b256c570c250e750110ab471100e0e2755b87a6728326f0f33a11"
+    },
+    {
+      "path": "spritesheet/整体换装试色.webp",
+      "upstreamGitBlob": "c412d04b857adc88916437dd7f65dcc5e8f9660d",
+      "sha256": "18a777dec34717d5cd467a7c7012e87cc0826811b8be8f7aab6c6d88cba3f8ef"
+    },
+    {
+      "path": "spritesheet/是啊吃什么.webp",
+      "upstreamGitBlob": "ccc67d78320966c8f74eb93aa5c11d1aeebdb9b2",
+      "sha256": "72b61252f5482b0453be20dfa4558b5639bcfbf505d3dfc94aec832b40149a6f"
+    },
+    {
+      "path": "spritesheet/晨间刷牙.webp",
+      "upstreamGitBlob": "ef7fd65856acbb38defb894d54bc3d2eb5157711",
+      "sha256": "e64fdf0fb31c197ba68ae0ca5282794af2a6a6ca64ac3a244918d0dc3e84abc6"
+    },
+    {
+      "path": "spritesheet/涮火锅.webp",
+      "upstreamGitBlob": "a5af24c76f445ea49ae5ba5315dbc1399026e67a",
+      "sha256": "0f8af56d1a3bca8029cdc531e8114c74cc5d3b3510f84a39e34b8ba785003472"
+    },
+    {
+      "path": "spritesheet/深度思考碎碎念.webp",
+      "upstreamGitBlob": "621287b7d009a50b740aaa27877ea3769a4bdd9e",
+      "sha256": "e081fd79ff292bc3861f3b30de444ed65a88af7c1043f275412099f13727a3a2"
+    },
+    {
+      "path": "spritesheet/玩游戏气急败坏.webp",
+      "upstreamGitBlob": "0d3268728aea4cdd4506328c7b95dee3d7880fba",
+      "sha256": "44eec74095cb9b6043350c1b6e587229d0f353c30ef39749d349f0780416fda6"
+    },
+    {
+      "path": "spritesheet/用龙尾拍打地面.webp",
+      "upstreamGitBlob": "ad9d4fca03948d838742c47355ccaa284bf8b738",
+      "sha256": "83287f4b0f4c466f01a4662e755c211b1707bdc524046c649d084bf9841fd978"
+    },
+    {
+      "path": "spritesheet/白龙现世.webp",
+      "upstreamGitBlob": "80fec2eba502ceaf62836b2f185e20e9abc0262d",
+      "sha256": "a65fbf9d8f1afec975e3fc1d58bc5f0c14cd32c9ea32742654b6eb3af80eb621"
+    },
+    {
+      "path": "spritesheet/穿针乞巧.webp",
+      "upstreamGitBlob": "8b6c6a5877dec331850062c5c300e4158416dad4",
+      "sha256": "8572c6cfa6e99168c927ee728a705725eec74fa254f52edc5fe565dac4a05301"
+    },
+    {
+      "path": "spritesheet/舞狮头.webp",
+      "upstreamGitBlob": "80ee47427deaba5f0202b8c90de5ecd37fb96c89",
+      "sha256": "a852e2be49059991af76af7dcbfd30c22005450561cf03cae3fd504f72718e43"
+    },
+    {
+      "path": "spritesheet/蝴蝶蜜蜂环绕头顶开花.webp",
+      "upstreamGitBlob": "c5686d0492f53b4ed3a2491912e931be5d8a1ef5",
+      "sha256": "a9affe9228892608d116cb2886072af29837f92878faaaf9b1e07a4ef38ac5da"
+    },
+    {
+      "path": "spritesheet/袋空如洗.webp",
+      "upstreamGitBlob": "3bf8fc7942ce0c8a9a5baefa1a7a2285b1b1a194",
+      "sha256": "f66da58095a66d4075140c7abf4e0e00585a4d62d165312cd0b8776dbafd57f2"
+    },
+    {
+      "path": "spritesheet/被吓一跳.webp",
+      "upstreamGitBlob": "c13dab27668cca3541a6ea43dfe0935717cdf248",
+      "sha256": "81f40cb7f1c86ac0e91b64077f3a1acffd303d2d3880613a7e220faf8f5baa0f"
+    },
+    {
+      "path": "spritesheet/被落叶淹没.webp",
+      "upstreamGitBlob": "f7301e7091fce4d62d62c273b301c5ee00e77777",
+      "sha256": "8ad1940efbf2f6fea1db74af1c9f4513b945d87ca2dac7bfc42ad8bd2ae940ae"
+    },
+    {
+      "path": "spritesheet/被鼠标拖拽悬空反馈.webp",
+      "upstreamGitBlob": "50adc599f8e47a32a492f809d5ee46fdd8b5b8b0",
+      "sha256": "40a6affb1981fd53c0385626ac3fcfed04e466410112cc4ba8ccbb75e1d65f7d"
+    },
+    {
+      "path": "spritesheet/装点圣诞树.webp",
+      "upstreamGitBlob": "7bcf916b5cf58f1ac6537297f32286dc9e3b3006",
+      "sha256": "0be881a189142b3ff7db62c4b26fe4fa3e6f7e3b101d418081e857d0104cb0df"
+    },
+    {
+      "path": "spritesheet/超大伸懒腰.webp",
+      "upstreamGitBlob": "19b29f4e6d5ecbbb7fe7bcada49529e37d169c8f",
+      "sha256": "20511253e003e237de0226c45e37a56f5734a8cfe3092234839921ecb8cdb44b"
+    },
+    {
+      "path": "spritesheet/踢毽子.webp",
+      "upstreamGitBlob": "631e6896dfafbf04fee24dfe781100a69c798eb1",
+      "sha256": "3ec68d716e70c908fbeba314777d4d4395a1c4dfd0802e166389e27e419c18be"
+    },
+    {
+      "path": "spritesheet/轻快记录.webp",
+      "upstreamGitBlob": "910fddaa20313c54b46dcde8a9f1af3c2b15cb83",
+      "sha256": "01f6b65e91d620582396b186d5563cc9d188cf6ee7d8a8c02b46edbde4ebb639"
+    },
+    {
+      "path": "spritesheet/钱袋如常.webp",
+      "upstreamGitBlob": "e70e2ccb8bdb7dbf0dde599ea81c4a4a60a42723",
+      "sha256": "566c2f83f11ea4fe1f28c0c4c73a87472ffc706a60847f70994e6a4e0fcfe85c"
+    },
+    {
+      "path": "spritesheet/钱袋满溢.webp",
+      "upstreamGitBlob": "07a65df10e8c58668afadcd9e9589f9a2ecc9196",
+      "sha256": "d0bf99f5a9594baadf5d06c9f71b41e4918cbd0e22b7ed4f4f617bca2e0fb803"
+    },
+    {
+      "path": "spritesheet/银袋叮当.webp",
+      "upstreamGitBlob": "6c9f2db17f712744c664437e99d14ad855bee38a",
+      "sha256": "58b2719a4601e6a2ffc7044725c06c53398ba56f71b61e0e9e2a1fb4c01ea82f"
+    },
+    {
+      "path": "spritesheet/雀跃庆祝.webp",
+      "upstreamGitBlob": "968a56c599f6f7a282a7c57f1e1f7afbc726f143",
+      "sha256": "fb764068f83f99b34c9e66af4cbfc732e8d815f6077c94c9ad921dc789eeddcc"
+    },
+    {
+      "path": "spritesheet/骑木马.webp",
+      "upstreamGitBlob": "5dc3794d00139fcb3bc704bdb0f6bb31bda1370b",
+      "sha256": "cf30340e54e069f5f9e24b79f0744961f1fb0c5b92269a7e4f3c2b189e026b9e"
+    },
+    {
+      "path": "spritesheet/龙息吐泡泡特效.webp",
+      "upstreamGitBlob": "f844b24a00478693b82d4e73595644bfca753069",
+      "sha256": "12031f63057bfcfb8a048dbbfdf2c47669f73367af6f64c761932df5fc02dbed"
+    }
+  ]
+}
