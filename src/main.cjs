@@ -82,7 +82,8 @@ async function start(){
 function startBridge(args){
  bridge?.stop();
  const sinceIndex=args.indexOf('--codex-since'),since=sinceIndex>=0?Number(args[sinceIndex+1]):Date.now();
- bridge=args.includes('--cli')?new CliBridge({since:Number.isFinite(since)?since:Date.now()}):new DesktopBridge();bridge.on('state',s=>{latest=s;send('state',s);if(s.connected&&!isolatedData){if(!win.isVisible())win.showInactive();if(!win.isAlwaysOnTop())win.setAlwaysOnTop(true,'pop-up-menu');}else if(!s.connected)win.hide();});bridge.on('issue',m=>send('connection-issue',m));bridge.start();
+ const exeIndex=args.indexOf('--codex-exe'),executable=exeIndex>=0?args[exeIndex+1]:undefined;
+ bridge=args.includes('--cli')?new CliBridge({since:Number.isFinite(since)?since:Date.now(),executable}):new DesktopBridge();bridge.on('state',s=>{latest=s;send('state',s);if(s.connected&&!isolatedData){if(!win.isVisible())win.showInactive();if(!win.isAlwaysOnTop())win.setAlwaysOnTop(true,'pop-up-menu');}else if(!s.connected)win.hide();});bridge.on('issue',m=>send('connection-issue',m));bridge.start();
 }
 function clamp(p){const area=screen.getDisplayNearestPoint({x:Math.round(p.x+WIDTH/2),y:Math.round(p.y+HEIGHT-150)}).workArea;return constrainWindow(p,area);}
 function moveWindow(bounds){win.setBounds({x:bounds.x,y:bounds.y,width:WIDTH,height:HEIGHT},false);}

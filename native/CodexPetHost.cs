@@ -175,7 +175,7 @@ internal static class CodexPetHost
                             {
                                 string childArgs = "--codex-pid " + owner.Id;
                                 if (Array.IndexOf(args, "--cli") >= 0 || IsCli(owner))
-                                    childArgs += " --cli --codex-since " + ((long)(owner.StartTime.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalMilliseconds);
+                                    childArgs += " --cli --codex-since " + ((long)(owner.StartTime.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalMilliseconds) + " --codex-exe " + Quote(owner.MainModule.FileName);
                                 if (testData != null) childArgs += " --test-user-data " + Quote(testData);
                                 ProcessStartInfo info = new ProcessStartInfo(petExe, childArgs);
                                 info.UseShellExecute = false; info.CreateNoWindow = true;

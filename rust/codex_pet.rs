@@ -9,11 +9,11 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     fs::{self, File, OpenOptions},
-    io::{Cursor, Read, Seek, SeekFrom, Write},
+    io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom, Write},
     mem::{size_of, zeroed},
     os::windows::{ffi::OsStrExt, io::AsRawHandle, process::CommandExt},
     path::{Path, PathBuf},
-    process::{Child, Command},
+    process::{Child, Command, Stdio},
     ptr::{null, null_mut},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -403,6 +403,91 @@ fn allowed_tool(name: &str) -> bool {
 }
 
 const CLI_READ_LIMIT: u64 = 1024 * 1024;
+fn cli_executable(args: &[String]) -> PathBuf {
+    option(args, "--codex-exe")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("CODEX_CLI_PATH").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("codex.exe"))
+}
+struct AccountReader(Child);
+impl Drop for AccountReader {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+fn read_cli_usage(executable: &Path) -> Result<Usage, String> {
+    let mut process = AccountReader(
+        Command::new(executable)
+            .args(["app-server", "--listen", "stdio://"])
+            .current_dir(
+                std::env::var_os("USERPROFILE")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from(".")),
+            )
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW_FLAG)
+            .spawn()
+            .map_err(|_| "无法启动 Codex CLI；请检查 CLI 安装或 CODEX_CLI_PATH".to_string())?,
+    );
+    let mut input = process.0.stdin.take().ok_or("CLI 额度连接写入失败")?;
+    let output = process.0.stdout.take().ok_or("CLI 额度连接读取失败")?;
+    let (tx, rx) = mpsc::sync_channel(16);
+    thread::spawn(move || {
+        let mut reader = BufReader::new(output);
+        loop {
+            let mut bytes = Vec::new();
+            match (&mut reader)
+                .take(CLI_READ_LIMIT + 1)
+                .read_until(b'\n', &mut bytes)
+            {
+                Ok(0) | Err(_) => break,
+                Ok(_) if bytes.len() as u64 > CLI_READ_LIMIT => break,
+                _ => {}
+            }
+            if let Ok(message) = serde_json::from_slice::<Value>(&bytes) {
+                if tx.send(message).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    writeln!(input,"{}",json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex_desktop_pet","title":"Codex Desktop Pet","version":VERSION}}}))
+        .map_err(|_|"CLI 额度连接写入失败")?;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut initialized = false;
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        let message = rx
+            .recv_timeout(remaining)
+            .map_err(|_| "CLI 额度读取超时或连接已结束")?;
+        let id = message["id"].as_u64();
+        if !matches!(id, Some(1 | 2)) {
+            continue;
+        }
+        if message.get("error").is_some() {
+            return Err("CLI 无法读取账号额度；请确认已使用 ChatGPT 账号登录".into());
+        }
+        if !message["result"].is_object() {
+            continue;
+        }
+        if id == Some(1) && !initialized {
+            initialized = true;
+            writeln!(input, "{}", json!({"method":"initialized"}))
+                .map_err(|_| "CLI 额度连接写入失败")?;
+            writeln!(
+                input,
+                "{}",
+                json!({"id":2,"method":"account/rateLimits/read"})
+            )
+            .map_err(|_| "CLI 额度连接写入失败")?;
+        } else if id == Some(2) && initialized {
+            return Ok(normalize_usage(&message["result"]));
+        }
+    }
+    Err("CLI 额度读取超时".into())
+}
 fn codex_home() -> PathBuf {
     std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
@@ -531,7 +616,10 @@ impl CliLogs {
                 return Ok(());
             };
             tail.cli = meta["type"] == "session_meta"
-                && matches!(meta["payload"]["source"].as_str(), Some("cli" | "exec"));
+                && matches!(
+                    meta["payload"]["source"].as_str(),
+                    Some("cli" | "exec" | "vscode")
+                );
             tail.initialized = true;
             tail.offset = (end as u64 + 1).max(size.saturating_sub(CLI_READ_LIMIT));
             tail.dropping = tail.offset > end as u64 + 1;
@@ -1006,7 +1094,7 @@ fn start_bridge(tx: Sender<Notice>, stop: Arc<AtomicBool>) -> Sender<BridgeComma
                     let _ = tx.send(Notice::State(logs.poll()));
                 }
                 if usage {
-                    let _ = tx.send(Notice::Usage(logs.usage()));
+                    let _ = tx.send(Notice::Usage(read_cli_usage(&cli_executable(&args))));
                 }
                 thread::sleep(Duration::from_millis(25));
             }
@@ -1354,6 +1442,16 @@ fn watcher(args: &[String], profile: &Path) -> Result<(), String> {
                         .arg("--cli")
                         .arg("--codex-since")
                         .arg(process_since(handle).to_string());
+                    let mut path = [0u16; 32768];
+                    let mut size = path.len() as u32;
+                    if unsafe {
+                        QueryFullProcessImageNameW(handle.0, 0, path.as_mut_ptr(), &mut size)
+                    } != 0
+                    {
+                        command
+                            .arg("--codex-exe")
+                            .arg(String::from_utf16_lossy(&path[..size as usize]));
+                    }
                 }
                 if flag(args, "--demo") {
                     command.arg("--demo");
@@ -3484,11 +3582,12 @@ fn run() -> Result<(), String> {
                 .unwrap_or_else(now_ms);
             let mut logs = CliLogs::new(codex_home().join("sessions"), since);
             let state = logs.poll();
+            let usage = read_cli_usage(&cli_executable(&args));
             write_json(
                 Path::new(&file),
-                &json!({"source":"cli","state":state,"usage":logs.usage().ok(),"animationCount":Pack::read()?.animations.len()}),
+                &json!({"source":"cli","state":state,"usage":usage.as_ref().ok(),"usageError":usage.as_ref().err(),"logUsage":logs.usage().ok(),"animationCount":Pack::read()?.animations.len()}),
             )?;
-            return Ok(());
+            return usage.map(|_| ());
         }
         let result = (|| -> Result<Value, String> {
             let mut d = Desktop::connect()?;

@@ -3,6 +3,7 @@ const os=require('node:os');
 const path=require('node:path');
 const {EventEmitter}=require('node:events');
 const {aggregate,normalizeUsage}=require('./model.cjs');
+const {readCliUsage}=require('./cli-usage.cjs');
 const MAX_READ=1024*1024;
 
 function rolloutFiles(root){
@@ -28,8 +29,8 @@ function cliUsage(raw,at){
 // Observe durable CLI events only. No commands, prompts, or transcript text are
 // retained. Reads and bootstrap tails are bounded even for very large rollouts.
 class CliBridge extends EventEmitter {
-  constructor({home=process.env.CODEX_HOME||path.join(os.homedir(),'.codex'),since=Date.now()}={}){
-    super();this.root=path.join(home,'sessions');this.since=since;this.files=new Map();this.completedUntil=0;this.cachedUsage=null;
+  constructor({home=process.env.CODEX_HOME||path.join(os.homedir(),'.codex'),since=Date.now(),executable,usageReader=readCliUsage}={}){
+    super();this.root=path.join(home,'sessions');this.since=since;this.files=new Map();this.completedUntil=0;this.cachedUsage=null;this.executable=executable;this.usageReader=usageReader;
   }
   start(){this.tick();this.timer=setInterval(()=>this.tick(),3500);}
   snapshot(){return {...aggregate([...this.files.values()].filter(f=>f.cli).map(f=>({id:f.id,hostId:'cli',title:'Codex CLI',status:f.status})),this.completedUntil),connected:true};}
@@ -62,7 +63,7 @@ class CliBridge extends EventEmitter {
         const header=Buffer.alloc(Math.min(size,MAX_READ));fs.readSync(fd,header,0,header.length,0);
         const end=header.indexOf(10);if(end<0)return;
         let meta;try{meta=JSON.parse(header.subarray(0,end).toString('utf8'));}catch{return;}
-        f.cli=meta.type==='session_meta'&&['cli','exec'].includes(meta.payload?.source);
+        f.cli=meta.type==='session_meta'&&['cli','exec','vscode'].includes(meta.payload?.source);
         f.id=typeof meta.payload?.id==='string'?meta.payload.id:path.basename(file);
         f.initialized=true;
         f.offset=Math.max(end+1,size-MAX_READ);f.dropping=f.offset>end+1;
@@ -90,7 +91,7 @@ class CliBridge extends EventEmitter {
     }
     this.emit('state',this.snapshot());
   }
-  async usage(){this.tick();if(!this.cachedUsage)throw Error('CLI 尚未记录额度；请先完成一次请求（API Key 账号可能不提供额度）');return this.cachedUsage;}
+  async usage(){return this.usageReader({executable:this.executable});}
   disconnect(){this.files.clear();this.completedUntil=0;this.cachedUsage=null;this.since=Date.now();}
   stop(){clearInterval(this.timer);this.disconnect();}
 }

@@ -9,7 +9,7 @@ function setup(t,source='cli'){
   const root=path.join(home,'sessions','2026','11','12');fs.mkdirSync(root,{recursive:true});
   const file=path.join(root,'rollout-test.jsonl');
   fs.writeFileSync(file,JSON.stringify({type:'session_meta',payload:{id:'test',source,base_instructions:'private instructions'}})+'\n');
-  return {bridge:new CliBridge({home,since}),file};
+  return {bridge:new CliBridge({home,since,usageReader:async()=>{throw Error('fixture offline');}}),file};
 }
 test('CLI works without desktop pipes and observes live completion and interruption',async t=>{
   const {bridge,file}=setup(t);bridge.tick();
@@ -18,7 +18,7 @@ test('CLI works without desktop pipes and observes live completion and interrupt
   fs.appendFileSync(file,event('task_complete',{last_agent_message:'private answer'}));bridge.tick();assert.equal(bridge.snapshot().state,'complete');
   fs.appendFileSync(file,event('turn_started')+event('turn_aborted'));bridge.completedUntil=0;bridge.tick();assert.equal(bridge.snapshot().state,'idle');
   assert.ok(!JSON.stringify([...bridge.files.values()]).includes('private'));
-  await assert.rejects(bridge.usage(),/CLI 尚未记录额度/);
+  await assert.rejects(bridge.usage(),/fixture offline/);
 });
 test('bootstrap never celebrates historical completions or revives tasks predating the owner',t=>{
   const {bridge,file}=setup(t);
@@ -26,11 +26,13 @@ test('bootstrap never celebrates historical completions or revives tasks predati
   fs.appendFileSync(file,event('task_complete'));bridge.tick();assert.equal(bridge.snapshot().state,'idle');
   bridge.disconnect();bridge.tick();assert.equal(bridge.completedUntil,0);
 });
-test('desktop, extension, and subagent rollouts do not count as CLI activity',t=>{
-  for(const source of ['vscode','mcp',{subagent:{thread_spawn:{}}}]){
+test('desktop and subagent rollouts are excluded; vscode-originated CLI sessions are observed',t=>{
+  for(const source of ['mcp',{subagent:{thread_spawn:{}}}]){
     const {bridge,file}=setup(t,source);fs.appendFileSync(file,event('task_started'));bridge.tick();assert.equal(bridge.snapshot().working,0);
   }
-  const {bridge,file}=setup(t,'exec');fs.appendFileSync(file,event('turn_started'));bridge.tick();assert.equal(bridge.snapshot().working,1);
+  for(const source of ['exec','vscode']){
+    const {bridge,file}=setup(t,source);fs.appendFileSync(file,event('turn_started'));bridge.tick();assert.equal(bridge.snapshot().working,1);
+  }
 });
 test('partial UTF-8 records, malformed JSON, truncation, and deletion recover',t=>{
   const {bridge,file}=setup(t);bridge.tick();
@@ -49,9 +51,15 @@ test('large transcript lines are skipped with bounded reads and no retained text
 test('quota uses snake_case CLI fields, preserves unknown data and original timestamp',async t=>{
   const {bridge,file}=setup(t);bridge.tick();
   fs.appendFileSync(file,event('token_count',{info:{private:'usage details'},rate_limits:{limit_id:'codex',primary:{used_percent:21,window_minutes:300,resets_at:1800000000},secondary:{used_percent:null}}}));
-  const usage=await bridge.usage();
+  bridge.tick();const usage=bridge.cachedUsage;
   assert.deepEqual(usage.buckets[0].windows.map(w=>w.remaining),[79,null]);assert.equal(usage.buckets[0].windows[0].minutes,300);
   assert.equal(usage.fetchedAt,Date.parse('2026-11-12T00:00:01.123Z'));assert.equal(usage.source,'cli');
-  fs.appendFileSync(file,event('token_count',{rate_limits:null}));assert.equal((await bridge.usage()).fetchedAt,usage.fetchedAt);
+  fs.appendFileSync(file,event('token_count',{rate_limits:null}));bridge.tick();assert.equal(bridge.cachedUsage.fetchedAt,usage.fetchedAt);
   assert.equal(cliUsage({primary:{used_percent:120}},since).buckets[0].windows[0].remaining,0);
+});
+test('live quota and reset count do not depend on any matching session log',async()=>{
+  const bridge=new CliBridge({home:path.join(os.tmpdir(),'nonexistent-codex-home'),executable:'native-codex.exe',usageReader:async({executable})=>{
+    assert.equal(executable,'native-codex.exe');return {buckets:[],resetsAvailable:2};
+  }});
+  assert.equal((await bridge.usage()).resetsAvailable,2);
 });

@@ -53,7 +53,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-rust.ps1
 
 使用与 Electron 版相同的 Codex 桌面本地协议，仅调用 `list_threads` 与 `get_usage_limits` 两种只读工具，并持续处理任务状态订阅。对话正文、工具参数与待确认请求内容不保存在状态镜像中。当前适配仍以 Codex Windows 26.1106.6628.0 为验证对象。
 
-CLI 模式使用本地 `sessions/**/rollout-*.jsonl` 的增量读取，不依赖 Desktop 管道；`--cli --probe 输出.json` 可检查日志状态与额度快照，`--cli --owner-probe 输出.json` 可检查 CLI 进程识别。初始回读与单次读取均有上限，保留不完整行的文件偏移而不在内存保存正文。日志中的额度使用 snake_case 字段并保留其原始时间，界面显示“CLI 日志快照”。测试覆盖任务事件别名、完成/中断、历史状态过滤、分段写入、超长行跳过、文件截断/删除和来源隔离。真实 CLI 的审批及错误事件通常不落盘，不承诺与 Desktop 相同的提示精度；相关上游实现见 [事件协议](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs) 和 [日志持久化策略](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/policy.rs)。
+CLI 模式使用本地 `sessions/**/rollout-*.jsonl` 增量读取任务状态，不依赖 Desktop 管道；兼容 `cli/exec/vscode` 来源的本地会话。额度卡片使用 CLI `app-server` 的只读 `account/rateLimits/read` 接口获取当前账号额度与可用重置次数，不依赖日志或额外模型请求。查询子进程在完成或 20 秒超时后退出；监听器传递实际 CLI 路径，手动运行可用 `CODEX_CLI_PATH` 或 `--codex-exe` 指定原生 EXE。[官方协议说明](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt) 定义了额度窗口及 `rateLimitResetCredits.availableCount` 字段。
+
+`--cli --probe 输出.json` 可检查日志状态和实时账号额度；`logUsage` 仅供比较日志快照，`usageError` 记录实时查询是否失败。`--cli --owner-probe 输出.json` 检查 CLI 进程识别。初始回读与单次读取均有上限，保留不完整行的文件偏移而不在内存保存正文。测试覆盖任务事件别名、完成/中断、历史状态过滤、分段写入、超长行跳过、文件截断/删除和来源隔离。真实 CLI 的审批及错误事件通常不落盘，不承诺与 Desktop 相同的提示精度；相关上游实现见 [事件协议](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs) 和 [日志持久化策略](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/policy.rs)。
 
 18 项 Rust 测试覆盖原始素材字节一致性、消息分帧、只读工具限制、状态优先级、额度缺失与边界值、正文丢弃、CLI 日志、待机动态、稳定颜色帧、静止长按、拖动坐标和透明合成。原生窗口测试另行验证长按 128 次采样不写入位置；独立模拟宿主验证随宿主启动、退出，以及手动退出后本会话不重开。真实 Codex 未在测试中关闭，Windows 注销和其他电脑的验收仍需另行进行。
 
