@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Management;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Threading;
 
@@ -18,6 +19,46 @@ internal static class CodexPetHost
     static string Json(string s) { return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", " ").Replace("\n", " ") + "\""; }
     static string Key(Process p) { return p.Id + ":" + p.StartTime.ToUniversalTime().Ticks; }
 
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    static extern IntPtr CommandLineToArgvW(string command, out int count);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr LocalFree(IntPtr memory);
+
+    static bool IsCliCommand(string command)
+    {
+        if (String.IsNullOrWhiteSpace(command)) return false;
+        int count;
+        IntPtr argv = CommandLineToArgvW(command, out count);
+        if (argv == IntPtr.Zero) return false;
+        try
+        {
+            string[] args = new string[count];
+            for (int i = 0; i < count; i++) args[i] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(argv, i * IntPtr.Size));
+            string[] values = { "--config", "--enable", "--disable", "--remote", "--remote-auth-token-env",
+                "--image", "--model", "--local-provider", "--profile", "--sandbox", "--cd", "--add-dir", "--ask-for-approval",
+                "-c", "-i", "-m", "-p", "-s", "-C", "-a" };
+            string[] excluded = { "app-server", "exec-server", "mcp-server", "mcp", "completion", "login", "logout" };
+            // Only the first positional argument can be the top-level command.
+            // Prompts and arguments after exec/resume/etc. must not affect it.
+            for (int i = 1; i < args.Length; i++)
+            {
+                string arg = args[i];
+                if (arg == "--") return true;
+                if (Array.IndexOf(values, arg) >= 0)
+                {
+                    if (++i >= args.Length) return false;
+                    continue;
+                }
+                // --option=value and attached short values (-pname, -Cpath)
+                // are already one argv element, so consume no following value.
+                if (arg.StartsWith("-", StringComparison.Ordinal) && arg != "-") continue;
+                return Array.IndexOf(excluded, arg) < 0;
+            }
+            return true;
+        }
+        finally { LocalFree(argv); }
+    }
+
     static bool IsCli(Process p)
     {
         try
@@ -27,12 +68,7 @@ internal static class CodexPetHost
             using (ManagementObject entry = new ManagementObject("Win32_Process.Handle='" + p.Id + "'"))
             {
                 string command = (string)entry["CommandLine"];
-                if (String.IsNullOrEmpty(command)) return false;
-                // Ignore the executable itself; it may live in a directory with spaces.
-                int end = command[0] == '"' ? command.IndexOf('"', 1) + 1 : command.IndexOf(' ');
-                string arguments = end > 0 ? command.Substring(end).Trim() : "";
-                return !System.Text.RegularExpressions.Regex.IsMatch(arguments,
-                    @"(^|\s)(app-server|exec-server|mcp-server|mcp|completion|login|logout)(\s|$)");
+                return IsCliCommand(command);
             }
         }
         catch { return false; }

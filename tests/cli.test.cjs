@@ -3,12 +3,12 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {CliBridge,cliUsage}=require('../src/cli.cjs');
 const since=Date.parse('2026-11-12T00:00:00Z');
 const event=(type,extra={},timestamp='2026-11-12T00:00:01.123Z')=>JSON.stringify({timestamp,type:'event_msg',payload:{type,...extra}})+'\n';
-function setup(t,source='cli'){
+function setup(t,source='cli',originator='codex-tui'){
   const home=fs.mkdtempSync(path.join(os.tmpdir(),'codex-pet-cli-'));
   t.after(()=>fs.rmSync(home,{recursive:true,force:true}));
   const root=path.join(home,'sessions','2026','11','12');fs.mkdirSync(root,{recursive:true});
   const file=path.join(root,'rollout-test.jsonl');
-  fs.writeFileSync(file,JSON.stringify({type:'session_meta',payload:{id:'test',source,base_instructions:'private instructions'}})+'\n');
+  fs.writeFileSync(file,JSON.stringify({type:'session_meta',payload:{id:'test',source,originator,base_instructions:'private instructions'}})+'\n');
   return {bridge:new CliBridge({home,since,usageReader:async()=>{throw Error('fixture offline');}}),file};
 }
 test('CLI works without desktop pipes and observes live completion and interruption',async t=>{
@@ -32,6 +32,15 @@ test('desktop and subagent rollouts are excluded; vscode-originated CLI sessions
   }
   for(const source of ['exec','vscode']){
     const {bridge,file}=setup(t,source);fs.appendFileSync(file,event('turn_started'));bridge.tick();assert.equal(bridge.snapshot().working,1);
+  }
+});
+test('session metadata distinguishes Desktop and IDE sessions from supported CLI origins',t=>{
+  const cases=require('./fixtures/cli-origins.json');
+  for(const {metadata,expected}of cases){
+    const {bridge,file}=setup(t);
+    fs.writeFileSync(file,JSON.stringify({type:'session_meta',payload:{id:'test',...metadata}})+'\n'+event('task_started'));
+    bridge.tick();
+    assert.equal(bridge.snapshot().working,expected?1:0,JSON.stringify(metadata));
   }
 });
 test('partial UTF-8 records, malformed JSON, truncation, and deletion recover',t=>{

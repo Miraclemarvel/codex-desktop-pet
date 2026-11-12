@@ -12,13 +12,16 @@ if($LASTEXITCODE -ne 0){throw 'CLI fixture compilation failed.'}
 Add-Type -TypeDefinition @'
 using System;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 public static class CodexCliProcessChecks {
-    public static void Run(string hostExe, string mockExe) {
+    public static void Run(string hostExe, string mockExe, string[] cases, bool[] expected) {
         MethodInfo check = Assembly.LoadFile(hostExe).GetType("CodexPetHost")
             .GetMethod("IsCli", BindingFlags.NonPublic | BindingFlags.Static);
-        foreach (string args in new [] { "", "exec", "app-server", "exec-server", "mcp-server", "-c x=y app-server" }) {
+        List<string> failures = new List<string>();
+        for (int i = 0; i < cases.Length; i++) {
+            string args = cases[i];
             ProcessStartInfo info = new ProcessStartInfo(mockExe, args);
             info.UseShellExecute = false; info.CreateNoWindow = true;
             info.WindowStyle = ProcessWindowStyle.Hidden;
@@ -26,15 +29,16 @@ public static class CodexCliProcessChecks {
                 try {
                     Thread.Sleep(150);
                     bool actual = (bool)check.Invoke(null, new object[] { p });
-                    bool expected = args == "" || args == "exec";
-                    if (actual != expected) throw new Exception("Incorrect CLI classification: " + args);
+                    if (actual != expected[i]) failures.Add(args + " (expected " + expected[i] + ", got " + actual + ")");
                 } finally {
                     if (!p.HasExited) { p.Kill(); p.WaitForExit(5000); }
                 }
             }
         }
+        if (failures.Count > 0) throw new Exception("Incorrect CLI classifications: " + String.Join("; ", failures));
     }
 }
 '@
-[CodexCliProcessChecks]::Run($hostExe,$mockExe)
-Write-Output 'CLI host: interactive/exec accepted; app-server/exec-server/mcp-server rejected (6 cases).'
+$cases=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/cli-command-lines.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+[CodexCliProcessChecks]::Run($hostExe,$mockExe,[string[]]@($cases | ForEach-Object {$_.arguments}),[bool[]]@($cases | ForEach-Object {$_.expected}))
+Write-Output ('CLI host: '+$cases.Count+' Windows command-line classification cases passed.')

@@ -26,6 +26,11 @@ function cliUsage(raw,at){
   const window=w=>w?{usedPercent:w.used_percent,windowDurationMins:w.window_minutes,resetsAt:w.resets_at}:null;
   return {...normalizeUsage({rateLimits:{limitId:raw.limit_id,limitName:raw.limit_name,primary:window(raw.primary),secondary:window(raw.secondary),credits:raw.credits}},at),source:'cli'};
 }
+function isCliSession(meta){
+  if(['cli','exec'].includes(meta?.source))return true;
+  // Desktop also writes source=vscode. Only known CLI originators opt in.
+  return meta?.source==='vscode'&&['codex-tui','codex_cli_rs','codex_exec'].includes(meta.originator);
+}
 // Observe durable CLI events only. No commands, prompts, or transcript text are
 // retained. Reads and bootstrap tails are bounded even for very large rollouts.
 class CliBridge extends EventEmitter {
@@ -63,7 +68,7 @@ class CliBridge extends EventEmitter {
         const header=Buffer.alloc(Math.min(size,MAX_READ));fs.readSync(fd,header,0,header.length,0);
         const end=header.indexOf(10);if(end<0)return;
         let meta;try{meta=JSON.parse(header.subarray(0,end).toString('utf8'));}catch{return;}
-        f.cli=meta.type==='session_meta'&&['cli','exec','vscode'].includes(meta.payload?.source);
+        f.cli=meta.type==='session_meta'&&isCliSession(meta.payload);
         f.id=typeof meta.payload?.id==='string'?meta.payload.id:path.basename(file);
         f.initialized=true;
         f.offset=Math.max(end+1,size-MAX_READ);f.dropping=f.offset>end+1;

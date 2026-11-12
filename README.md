@@ -53,7 +53,7 @@ Rust 版通过同一个 EXE 的后台监听模式等待 Codex，再启动桌宠�
 npm start -- --cli
 ```
 
-CLI 模式每 3.5 秒增量读取 `$env:CODEX_HOME/sessions/`，未设置时使用 `$HOME/.codex/sessions/`。自定义 `CODEX_HOME` 时，请在同一个 PowerShell 环境启动监听器与 CLI；登录启动的监听器不会继承其他终端中临时设置的变量。识别 `source: cli/exec/vscode` 的本地会话，兼容使用 `vscode` 来源标记的 CLI 启动器及续接会话，忽略 Desktop 和子代理的日志；不修改 Codex 配置、不额外启动模型请求。源码开发模式从窗口启动时开始观察；后台监听模式从跟随的 CLI 进程启动时间开始观察。
+CLI 模式每 3.5 秒增量读取 `$env:CODEX_HOME/sessions/`，未设置时使用 `$HOME/.codex/sessions/`。自定义 `CODEX_HOME` 时，请在同一个 PowerShell 环境启动监听器与 CLI；登录启动的监听器不会继承其他终端中临时设置的变量。识别 `source: cli/exec` 的本地会话；`source: vscode` 还须具有已知 CLI `originator`（`codex-tui`、`codex_cli_rs` 或 `codex_exec`）才会纳入。Desktop 的 `source: vscode, originator: Codex Desktop`、其他 IDE 来源及子代理日志会被忽略。不修改 Codex 配置、不额外启动模型请求。源码开发模式从窗口启动时开始观察；后台监听模式从跟随的 CLI 进程启动时间开始观察。
 
 任务状态来自日志中的开始、完成和中断事件。打开额度卡片或点击刷新时，桌宠通过 CLI 自带的 `app-server` 调用只读 `account/rateLimits/read` 接口，获取当前账号额度、重置时间及可用重置次数；没有聊天日志也能读取。每次查询只进行协议初始化及额度读取，不创建聊天、不运行模型、不消耗重置次数，完成或超时后结束查询进程。接口未提供次数时显示“重置次数 —”，不会当作零；刷新失败时标记缓存。该接口需要 CLI 的 ChatGPT 登录，API Key 账号可能不提供此类额度。
 
@@ -73,7 +73,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-rust.ps1
 
 EXE 图标来自“元气挥手”第 48 帧笑脸头像，内嵌 16–256 像素的十种尺寸。来源记录见 [assets/ICON_SOURCE.json](assets/ICON_SOURCE.json)。
 
-应用逻辑集中在 [rust/codex_pet.rs](rust/codex_pet.rs)，构建依赖由 `rust/Cargo.toml` 和 `rust/Cargo.lock` 记录。脚本生成内嵌素材包、运行 18 项 Rust 测试，并输出单个 EXE 与 SHA-256 校验文件。
+应用逻辑集中在 [rust/codex_pet.rs](rust/codex_pet.rs)，构建依赖由 `rust/Cargo.toml` 和 `rust/Cargo.lock` 记录。脚本生成内嵌素材包、运行 20 项 Rust 测试，并输出单个 EXE 与 SHA-256 校验文件。
 
 Electron 版需要 Node.js 24+；生成 ZIP 还需要 Python 3。编译宿主使用 Windows 自带的 .NET Framework C# 编译器：
 
@@ -89,7 +89,7 @@ python scripts/archive.py
 
 源码在 `src/`，测试在 `tests/`，原生宿主源码在 `native/`。完整 92 张原始精灵图随仓库提供；需要重新下载时，在 PowerShell 7 中运行 `./scripts/download-assets.ps1`，脚本固定到已核对的上游版本。
 
-验证范围及版本修复记录见 [Rust 版记录](docs/rust.md#接入与验证) 和 [Electron 版记录](docs/verification.md)。GitHub Actions 分别运行 18 项 Rust 测试及单 EXE 编译、32 项 Electron 版测试及 6 个 CLI 宿主进程识别场景；这些检查不代替真实 Codex、Windows 登录或跨机器验证。
+验证范围及版本修复记录见 [Rust 版记录](docs/rust.md#接入与验证) 和 [Electron 版记录](docs/verification.md)。GitHub Actions 分别运行 20 项 Rust 测试及单 EXE 编译、33 项 Electron 版测试及 32 个 CLI 宿主进程识别场景；两种实现共用会话来源和命令行反例，覆盖 Desktop 来源隔离、提示词中的服务名称、选项值、Windows 引号与中文参数。这些检查不代替真实 Codex、Windows 登录或跨机器验证。
 
 ## 素材来源与许可说明
 

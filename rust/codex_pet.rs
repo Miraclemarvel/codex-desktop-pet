@@ -536,6 +536,17 @@ fn cli_usage(raw: &Value, at: u64) -> Usage {
     usage.from_cli = true;
     usage
 }
+fn is_cli_session(meta: &Value) -> bool {
+    match meta["source"].as_str() {
+        Some("cli" | "exec") => true,
+        // Desktop also uses vscode; only known CLI originators opt in.
+        Some("vscode") => matches!(
+            meta["originator"].as_str(),
+            Some("codex-tui" | "codex_cli_rs" | "codex_exec")
+        ),
+        _ => false,
+    }
+}
 #[derive(Default)]
 struct CliTail {
     offset: u64,
@@ -615,11 +626,7 @@ impl CliLogs {
             let Ok(meta) = serde_json::from_slice::<Value>(&header[..end]) else {
                 return Ok(());
             };
-            tail.cli = meta["type"] == "session_meta"
-                && matches!(
-                    meta["payload"]["source"].as_str(),
-                    Some("cli" | "exec" | "vscode")
-                );
+            tail.cli = meta["type"] == "session_meta" && is_cli_session(&meta["payload"]);
             tail.initialized = true;
             tail.offset = (end as u64 + 1).max(size.saturating_sub(CLI_READ_LIMIT));
             tail.dropping = tail.offset > end as u64 + 1;
@@ -1295,10 +1302,86 @@ fn find_desktop() -> Option<(u32, Handle)> {
     }
     None
 }
+fn is_cli_command(command: &str) -> bool {
+    if command.trim().is_empty() {
+        return false;
+    }
+    let mut count = 0;
+    let argv = unsafe { CommandLineToArgvW(wide(command).as_ptr(), &mut count) };
+    if argv.is_null() {
+        return false;
+    }
+    let args: Vec<String> = unsafe { std::slice::from_raw_parts(argv, count as usize) }
+        .iter()
+        .map(|p| {
+            let start = *p;
+            let mut length = 0;
+            unsafe {
+                while *start.add(length) != 0 {
+                    length += 1;
+                }
+                String::from_utf16_lossy(std::slice::from_raw_parts(start, length))
+            }
+        })
+        .collect();
+    unsafe {
+        LocalFree(argv as _);
+    }
+    let mut i = 1;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if arg == "--" {
+            return true;
+        }
+        if matches!(
+            arg,
+            "--config"
+                | "--enable"
+                | "--disable"
+                | "--remote"
+                | "--remote-auth-token-env"
+                | "--image"
+                | "--model"
+                | "--local-provider"
+                | "--profile"
+                | "--sandbox"
+                | "--cd"
+                | "--add-dir"
+                | "--ask-for-approval"
+                | "-c"
+                | "-i"
+                | "-m"
+                | "-p"
+                | "-s"
+                | "-C"
+                | "-a"
+        ) {
+            i += 2;
+            if i > args.len() {
+                return false;
+            }
+            continue;
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            return !matches!(
+                arg,
+                "app-server"
+                    | "exec-server"
+                    | "mcp-server"
+                    | "mcp"
+                    | "completion"
+                    | "login"
+                    | "logout"
+            );
+        }
+        i += 1;
+    }
+    true
+}
 fn find_cli() -> Option<(u32, Handle)> {
     // WMI supplies the command line, so an app-server daemon is never treated
     // as an interactive CLI. This runs only while the launcher has no owner.
-    let script = r#"$s=(Get-Process -Id $PID).SessionId; Get-CimInstance Win32_Process -Filter "Name='codex.exe'" | Where-Object { $_.SessionId -eq $s -and $_.CommandLine -and $_.ExecutablePath -notmatch '\\OpenAI.Codex_' -and (($_.CommandLine -replace '^("[^"]*"|\S+)\s*','') -notmatch '(^|\s)(app-server|exec-server|mcp-server|mcp|completion|login|logout)(\s|$)') } | Select-Object -First 1 -ExpandProperty ProcessId"#;
+    let script = r#"[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $s=(Get-Process -Id $PID).SessionId; $rows=@(Get-CimInstance Win32_Process -Filter "Name='codex.exe'" | Where-Object { $_.SessionId -eq $s -and $_.CommandLine -and $_.ExecutablePath -notmatch '\\OpenAI.Codex_' } | Select-Object ProcessId,CommandLine); ConvertTo-Json -InputObject $rows -Compress"#;
     let output = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .creation_flags(CREATE_NO_WINDOW_FLAG)
@@ -1307,11 +1390,13 @@ fn find_cli() -> Option<(u32, Handle)> {
     if !output.status.success() {
         return None;
     }
-    let pid = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<u32>()
-        .ok()?;
-    process_handle(pid).map(|h| (pid, h))
+    let rows: Vec<Value> = serde_json::from_slice(&output.stdout).ok()?;
+    rows.iter()
+        .filter(|p| p["CommandLine"].as_str().is_some_and(is_cli_command))
+        .find_map(|p| {
+            let pid = u32::try_from(p["ProcessId"].as_u64()?).ok()?;
+            process_handle(pid).map(|h| (pid, h))
+        })
 }
 fn find_codex() -> Option<(u32, Handle)> {
     find_desktop().or_else(find_cli)
@@ -3661,6 +3746,50 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cli_session_origins_exclude_desktop_and_unknown_vscode_clients() {
+        let cases: Vec<Value> =
+            serde_json::from_str(include_str!("../tests/fixtures/cli-origins.json")).unwrap();
+        let root = std::env::temp_dir().join(format!("codex-pet-origins-{}", uuid()));
+        fs::create_dir_all(&root).unwrap();
+        let result = std::panic::catch_unwind(|| {
+            for case in cases {
+                let metadata = &case["metadata"];
+                let header = json!({"type":"session_meta","payload":metadata});
+                let event = json!({"type":"event_msg","timestamp":"2026-11-12T00:00:01Z","payload":{"type":"task_started"}});
+                fs::write(
+                    root.join("rollout-origin.jsonl"),
+                    format!("{header}\n{event}\n"),
+                )
+                .unwrap();
+                let mut logs = CliLogs::new(root.clone(), 0);
+                assert_eq!(
+                    logs.poll().working,
+                    usize::from(case["expected"] == true),
+                    "{metadata}"
+                );
+            }
+        });
+        fs::remove_dir_all(&root).unwrap();
+        result.unwrap();
+    }
+    #[test]
+    fn cli_process_classification_uses_windows_argv_and_the_top_level_command() {
+        let cases: Vec<Value> =
+            serde_json::from_str(include_str!("../tests/fixtures/cli-command-lines.json")).unwrap();
+        for case in cases {
+            let command = format!(
+                "\"C:\\mock bin\\codex.exe\" {}",
+                case["arguments"].as_str().unwrap()
+            );
+            assert_eq!(
+                is_cli_command(&command),
+                case["expected"] == true,
+                "{command}"
+            );
+        }
+        assert!(!is_cli_command(""));
+    }
     #[test]
     fn cli_events_keep_only_status_and_timestamped_quota() {
         let since = rollout_time("2026-11-12T00:00:00Z").unwrap();
