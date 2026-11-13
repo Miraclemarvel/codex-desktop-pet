@@ -28,6 +28,31 @@
       "sourceSha256": "659cc2dbacb008078e030076fb78660a155b4f96858d67b31e91c573452493d7",
       "runtimeSha256": "4d50d6ea545f31c7b916bf5bb19366f9d4e4bd11df427770ccdd9261116835a6",
       "rgbaPixelsPreserved": true
+    },
+    {
+      "source": "edge-peek-tassel.png",
+      "runtime": "edge-peek-tassel.webp",
+      "width": 1199,
+      "height": 1312,
+      "sourceSha256": "9ed75021f01743ae82644846609afb7b5ec4d8aee2d834949a4b9e1530e8128a",
+      "runtimeSha256": "66fc9d3c2d61c43c32e40fab19476899ac6476077fe9dbbdd9ec6b0aaf01162a",
+      "rgbaPixelsPreserved": true,
+      "usage": "Only the local hanging-accessory patch is used at runtime; the rest of the approved sprite is retained.",
+      "targetOriginalPngRect": [
+        425,
+        420,
+        80,
+        215
+      ],
+      "sourcePngRect": [
+        416,
+        424,
+        80,
+        215
+      ]
     }
-  ]
+  ],
+  "tasselGeneration": "exec-4a524ee0-1f15-411a-88ca-226c2e466a6e.png",
+  "tasselReference": "User-supplied character illustration, used only to identify the hanging accessory.",
+  "tasselPrompt": "edge-peek-tassel-prompt.txt"
 }

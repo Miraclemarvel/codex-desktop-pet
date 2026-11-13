@@ -15,6 +15,8 @@ Rust 0.5.0-preview.5 的侧边探头素材与闭眼帧，由 OpenAI 内置 image
 
 角色与动画的权利归原权利人所有，本项目不把它们声明为原创，也不另行授予素材许可。截至 2026-11-12，上游根仓库没有统一的 LICENSE 文件，GPT 目录也未单列许可文件。其他角色包的素材限制或上游工具的代码 MIT 许可不自动适用于 GPT 素材；使用素材时请核对原作者的最新说明。
 
+0.5.0-preview.9 依据用户提供的角色参考，通过同一内置 imagegen 修正发饰下方的细链、珠坠与白色流苏。生成原图与无损 WebP 保存为 `assets/edge-peek-tassel.*`，提示词为 `assets/edge-peek-tassel-prompt.txt`；运行时仅取该局部饰物，保留原先定稿的其余姿势和颜色，裁剪坐标及校验值见 `assets/EDGE_SOURCE.json`。
+
 ## Electron
 
 Electron 版使用 Electron 40.10.6，采用 MIT 许可。完整运行时及 Chromium 第三方许可证随 Electron 版 Windows 发行包中的 `LICENSE`、`LICENSES.chromium.html` 一并提供。Rust 单 EXE 版不包含或使用 Electron。

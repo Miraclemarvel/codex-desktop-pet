@@ -46,6 +46,7 @@ const WIDTH: i32 = 520;
 const HEIGHT: i32 = 620;
 const PEEK_OPEN: &[u8] = include_bytes!("../assets/edge-peek.webp");
 const PEEK_BLINK: &[u8] = include_bytes!("../assets/edge-peek-blink.webp");
+const PEEK_TASSEL: &[u8] = include_bytes!("../assets/edge-peek-tassel.webp");
 
 fn wide(value: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
     value.as_ref().encode_wide().chain(Some(0)).collect()
@@ -1696,7 +1697,7 @@ impl DockArt {
             }
             out
         }
-        let left = decode(PEEK_OPEN)?;
+        let mut left = decode(PEEK_OPEN)?;
         let closed = decode(PEEK_BLINK)?;
         // Only the eye is composited from the generated blink frame. The approved
         // hair, hands, wing and tail therefore never move or change during a blink.
@@ -1722,6 +1723,34 @@ impl DockArt {
                 let edge = x.min(y).min(source.w - 1 - x).min(source.h - 1 - y).clamp(0, 8);
                 color[3] = (color[3] as i32 * edge / 8) as u8;
                 blink_left.pixels.extend_from_slice(&color);
+            }
+        }
+        // Replace only the dangling accessory, keeping the approved head, colors,
+        // hands and lower body outside this feathered patch pixel-for-pixel.
+        let tassel = decode(PEEK_TASSEL)?;
+        let target = BoxRect { x: 276, y: 403, w: 80, h: 215 };
+        let source = BoxRect { x: 284, y: 412, w: 80, h: 215 };
+        if target.x + target.w > left.width as i32 || target.y + target.h > left.height as i32
+            || source.x + source.w > tassel.width as i32 || source.y + source.h > tassel.height as i32 {
+            return Err("Tassel patch is outside the artwork".into());
+        }
+        for y in 0..target.h {
+            for x in 0..target.w {
+                let edge = x.min(y).min(target.w - 1 - x).min(target.h - 1 - y).clamp(0, 8) as u32;
+                if edge == 0 { continue; }
+                let at = (((target.y + y) as usize * left.width) + (target.x + x) as usize) * 4;
+                let from = (((source.y + y) as usize * tassel.width) + (source.x + x) as usize) * 4;
+                let blend = edge * 255 / 8;
+                let old_alpha = left.pixels[at + 3] as u32 * (255 - blend);
+                let new_alpha = tassel.pixels[from + 3] as u32 * blend;
+                let alpha = old_alpha + new_alpha;
+                for channel in 0..3 {
+                    left.pixels[at + channel] = if alpha == 0 { 0 } else {
+                        ((left.pixels[at + channel] as u32 * old_alpha
+                            + tassel.pixels[from + channel] as u32 * new_alpha + alpha / 2) / alpha) as u8
+                    };
+                }
+                left.pixels[at + 3] = ((alpha + 127) / 255) as u8;
             }
         }
         // The hands protrude beyond the straight screen-edge cut in the source.

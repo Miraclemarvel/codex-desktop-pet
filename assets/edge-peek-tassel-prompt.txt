@@ -1,0 +1,7 @@
+Mode: OpenAI built-in imagegen, precise-object-edit.
+Image 1 edit target: approved transparent edge-peek.png.
+Image 2 reference only: user-supplied character illustration showing the hanging accessory; not published with the repository.
+
+Make ONE tiny local correction on the approved transparent half-head side-peeking desktop dragon girl sprite: replace the curled braid-like dangling strands immediately below the white ChatGPT knot ornament with a fine white/silver chain, a tiny pale lavender teardrop bead, and a short white silk tassel with fine straight threads. Hang it naturally beside the hair, about the same footprint as the old dangling ornament. Keep the white ChatGPT six-loop knot unchanged. Preserve the 1199x1312 canvas, framing, tilted half-head, calm purple eye, tiny closed smile, hair, horn, little hands, wing, raised curled tail, colors, linework and genuine transparent alpha. Do not copy the reference's crying face, body, bowl, speech bubble, text or background. Only correct the hanging accessory; no recoloring or redesign.
+
+Runtime uses only a feathered local patch below the existing ornament. The rest of the generated edit is not substituted into the approved artwork. Alignment and exact lossless-file hashes are recorded in EDGE_SOURCE.json.
