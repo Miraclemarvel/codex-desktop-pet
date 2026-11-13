@@ -1,0 +1,11 @@
+定稿要求（多轮用户指导合并说明）
+
+按 hunmer/aboutme-pets/pets/gpt 的白发紫眼龙娘制作侧边吸附姿势。半个脑袋歪着从左边缘探出，仅露一只眼睛，闭嘴小笑，表情自然；两只带花边袖口的小手放在脸前面扒住边缘。发饰必须是白色 ChatGPT 六环结形标志，不是玫瑰。按原角色比例露出半扇淡紫色龙翼与一截白色鳞片卷尾，身体始终藏在屏幕后，尾巴靠近翅膀下沿。透明背景，不画墙面、边框、阴影、光晕或文字。右侧吸附由运行时镜像适配。
+
+内置 imagegen 的最后一次定稿编辑提示：
+
+Use case: precise-object-edit. Edit this approved transparent side-peeking dragon character sprite. Make ONE small positional adjustment: move the existing curled white scaled tail UPWARD about 8 percent of the total image height, closer to the underside of the wing. Its top tip may tuck partly BEHIND the lower wing edge. Keep the tail's exact existing size, scale pattern, curve, thickness and color; do NOT enlarge or shrink it. Keep the same invisible left screen-border alignment where its root is hidden offscreen. Preserve absolutely everything else: the approved half-head, calm single purple eye and tiny closed smile, white hair, horn, correct ChatGPT knot-shaped hair clip, two little hands/cuffs, wing position/size, original proportions, linework and colors. Do not add a torso, legs, another wing, new decorations or a drawn frame. Keep the sprite cleanly isolated on a REAL transparent background with NO gray haze, NO halo, NO white glow or drop shadow. Only lift the existing tail a little; no other redesign.
+
+闭眼帧提示：
+
+Create a matching CLOSED-EYE BLINK FRAME of this approved transparent desktop pet. Change ONLY the one visible purple eye: it is now gently closed, with a small curved eyelash line in the same location. Preserve all other pixels and the exact framing, scale and composition as closely as possible: the half-head, tiny closed smile, hair, horn, white ChatGPT knot ornament, both little hands, pale wing and raised curled scaled tail. No new pose, no movement, no redesign, no background or halo. Same real transparent background. This is only an animation blink frame; only the eye closes.

@@ -44,6 +44,8 @@ const RUN_VALUE: &str = "local.codex.desktop.pet.rust";
 const TITLE: &str = "Codex 白龙桌宠 · Rust";
 const WIDTH: i32 = 520;
 const HEIGHT: i32 = 620;
+const PEEK_OPEN: &[u8] = include_bytes!("../assets/edge-peek.webp");
+const PEEK_BLINK: &[u8] = include_bytes!("../assets/edge-peek-blink.webp");
 
 fn wide(value: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
     value.as_ref().encode_wide().chain(Some(0)).collect()
@@ -1579,12 +1581,209 @@ fn watcher(args: &[String], profile: &Path) -> Result<(), String> {
 
 // GUI and tests follow below. The atlas contains only the visible frame crops;
 // transparent margins are removed in memory and restored at the same offsets.
+#[derive(Clone)]
 struct Frame {
     x: usize,
     y: usize,
     width: usize,
     height: usize,
     pixels: Vec<u8>,
+}
+struct DockArt {
+    left: Frame,
+    right: Frame,
+    blink_left: Frame,
+    blink_right: Frame,
+    eye: BoxRect,
+}
+fn dock_color(mut rgba: [u8; 4]) -> [u8; 4] {
+    let (r, g, b) = (rgba[0] as f64, rgba[1] as f64, rgba[2] as f64);
+    let chroma = r.max(g).max(b) - r.min(g).min(b);
+    // Generated hair and membranes are more lavender than the original silver
+    // character. Match only low-chroma cool tones with a small luminance lift.
+    // Warm skin, the purple iris and alpha are left untouched.
+    if rgba[3] != 0 && chroma <= 36.0 && b + 4.0 >= r && r + 3.0 >= g && b >= g + 2.0 {
+        let luminance = r * 0.2126 + g * 0.7152 + b * 0.0722;
+        for channel in rgba.iter_mut().take(3) {
+            *channel = (luminance + (*channel as f64 - luminance) * 0.6 + 1.5).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    rgba
+}
+impl DockArt {
+    fn read() -> Result<Self, String> {
+        fn decode(bytes: &[u8]) -> Result<Frame, String> {
+            let mut decoder = image_webp::WebPDecoder::new(Cursor::new(bytes))
+                .map_err(|e| e.to_string())?;
+            let (w, h) = decoder.dimensions();
+            if !decoder.has_alpha() || w > 2048 || h > 2048 {
+                return Err("Invalid embedded dock artwork".into());
+            }
+            let mut rgba = vec![0; decoder.output_buffer_size().ok_or("Oversized dock artwork")?];
+            decoder.read_image(&mut rgba).map_err(|e| e.to_string())?;
+            for pixel in rgba.chunks_exact_mut(4) {
+                let color = dock_color([pixel[0], pixel[1], pixel[2], pixel[3]]);
+                pixel.copy_from_slice(&color);
+            }
+            let (mut left, mut top, mut right, mut bottom) = (w as usize, h as usize, 0, 0);
+            for y in 0..h as usize {
+                for x in 0..w as usize {
+                    if rgba[(y * w as usize + x) * 4 + 3] > 16 {
+                        left = left.min(x);
+                        top = top.min(y);
+                        right = right.max(x + 1);
+                        bottom = bottom.max(y + 1);
+                    }
+                }
+            }
+            if right <= left || bottom <= top {
+                return Err("Empty embedded dock artwork".into());
+            }
+            let mut pixels = Vec::with_capacity((right - left) * (bottom - top) * 4);
+            for y in top..bottom {
+                pixels.extend_from_slice(
+                    &rgba[(y * w as usize + left) * 4..(y * w as usize + right) * 4],
+                );
+            }
+            Ok(Frame { x: 0, y: 0, width: right - left, height: bottom - top, pixels })
+        }
+        fn mirror(frame: &Frame) -> Frame {
+            let mut out = frame.clone();
+            for y in 0..frame.height {
+                for x in 0..frame.width {
+                    let source = (y * frame.width + frame.width - 1 - x) * 4;
+                    let target = (y * frame.width + x) * 4;
+                    out.pixels[target..target + 4].copy_from_slice(&frame.pixels[source..source + 4]);
+                }
+            }
+            out
+        }
+        let left = decode(PEEK_OPEN)?;
+        let closed = decode(PEEK_BLINK)?;
+        // Only the eye is composited from the generated blink frame. The approved
+        // hair, hands, wing and tail therefore never move or change during a blink.
+        let eye = BoxRect { x: 103, y: 423, w: 135, h: 108 };
+        if eye.x + eye.w > left.width as i32 || eye.y + eye.h > left.height as i32 {
+            return Err("Dock eye region is outside the artwork".into());
+        }
+        let source = BoxRect {
+            x: (eye.x as f64 * closed.width as f64 / left.width as f64).round() as i32,
+            y: (eye.y as f64 * closed.height as f64 / left.height as f64).round() as i32,
+            w: (eye.w as f64 * closed.width as f64 / left.width as f64).round() as i32,
+            h: (eye.h as f64 * closed.height as f64 / left.height as f64).round() as i32,
+        };
+        let mut blink_left = Frame {
+            x: 0, y: 0, width: source.w as usize, height: source.h as usize,
+            pixels: Vec::with_capacity((source.w * source.h * 4) as usize),
+        };
+        for y in 0..source.h {
+            for x in 0..source.w {
+                let at = (((source.y + y) as usize * closed.width) + (source.x + x) as usize) * 4;
+                let mut color = [closed.pixels[at], closed.pixels[at + 1],
+                    closed.pixels[at + 2], closed.pixels[at + 3]];
+                let edge = x.min(y).min(source.w - 1 - x).min(source.h - 1 - y).clamp(0, 8);
+                color[3] = (color[3] as i32 * edge / 8) as u8;
+                blink_left.pixels.extend_from_slice(&color);
+            }
+        }
+        Ok(Self { right: mirror(&left), blink_right: mirror(&blink_left), left, blink_left, eye })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum DockSide { Left, Right }
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DockPlacement {
+    side: DockSide,
+    anchor: Position,
+}
+struct DockBlink {
+    next: u64,
+    until: u64,
+}
+impl DockBlink {
+    fn new(now: u64) -> Self {
+        Self { next: now.saturating_add(4500 + random_index(3500) as u64), until: 0 }
+    }
+    fn closed(&mut self, now: u64, enabled: bool) -> bool {
+        if !enabled {
+            self.until = 0;
+            self.next = now.saturating_add(4500);
+            return false;
+        }
+        if now >= self.next {
+            self.until = now.saturating_add(140);
+            self.next = now.saturating_add(4500 + random_index(3500) as u64);
+        }
+        now < self.until
+    }
+}
+fn dock_side(point: POINT, area: RECT, dpi: f64) -> Option<DockSide> {
+    let distance = (28.0 * dpi).round() as i32;
+    if point.y < area.top || point.y >= area.bottom {
+        None
+    } else if point.x <= area.left + distance {
+        Some(DockSide::Left)
+    } else if point.x >= area.right - distance {
+        Some(DockSide::Right)
+    } else {
+        None
+    }
+}
+fn dock_target(point: POINT, area: RECT, dpi: f64, visible: Option<BoxRect>) -> Option<DockSide> {
+    if point.y < area.top || point.y >= area.bottom {
+        return None;
+    }
+    if let Some(side) = dock_side(point, area, dpi) {
+        return Some(side);
+    }
+    let visible = visible?;
+    if visible.y >= area.bottom || visible.y + visible.h <= area.top {
+        return None;
+    }
+    let distance = (28.0 * dpi).round() as i32;
+    if visible.x <= area.left + distance && visible.x + visible.w > area.left {
+        Some(DockSide::Left)
+    } else if visible.x + visible.w >= area.right - distance && visible.x < area.right {
+        Some(DockSide::Right)
+    } else {
+        None
+    }
+}
+fn dock_layout(area: RECT, side: DockSide, y: i32, dpi: f64, scale: f64, aspect: f64) -> BoxRect {
+    let h = ((190.0 * dpi * scale / 0.8).round() as i32)
+        .clamp(1, (area.bottom - area.top).max(1));
+    let w = ((h as f64 * aspect).round() as i32)
+        .clamp(1, (area.right - area.left).max(1));
+    BoxRect {
+        x: if side == DockSide::Left { area.left } else { area.right - w },
+        y: y.clamp(area.top, (area.bottom - h).max(area.top)),
+        w, h,
+    }
+}
+#[derive(Clone, Copy)]
+enum DockPhase {
+    HideBody { anchor: POINT },
+    Peek,
+    HidePeek { quota: bool },
+    Reveal,
+}
+struct DockSlide {
+    phase: DockPhase,
+    side: DockSide,
+    started: Instant,
+    duration: f64,
+    pixels: Vec<u32>,
+    w: i32,
+    h: i32,
+    distance: i32,
+    area: RECT,
+}
+fn slide_fraction(t: f64, reveal: bool) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    if reveal { 1.0 - (1.0 - t).powi(3) } else { t * t * (3.0 - 2.0 * t) }
 }
 struct Atlas {
     index: usize,
@@ -1675,6 +1874,8 @@ struct Settings {
     position: Option<Position>,
     motion: String,
     appearance: String,
+    edge_docking: bool,
+    dock: Option<DockPlacement>,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -1684,6 +1885,8 @@ impl Default for Settings {
             position: None,
             motion: "quiet".into(),
             appearance: "clear".into(),
+            edge_docking: true,
+            dock: None,
         }
     }
 }
@@ -1857,6 +2060,7 @@ struct Press {
     last: POINT,
     moved: bool,
     allow_drag: bool,
+    edge_drag: bool,
 }
 impl Press {
     fn sample(
@@ -1877,7 +2081,7 @@ impl Press {
         }
         let started = !self.moved;
         self.moved = true;
-        let p = constrain(
+        let mut p = constrain(
             POINT {
                 x: self.origin.x + dx,
                 y: self.origin.y + dy,
@@ -1887,6 +2091,13 @@ impl Press {
             h,
             dpi,
         );
+        if self.edge_drag {
+            // Let the painted character reach the border, rather than stopping
+            // at the transparent window's padding. At least half the window
+            // remains reachable until the release either docks or restores it.
+            let margin = w / 2;
+            p.x = (self.origin.x + dx).clamp(area.left - margin, area.right - w + margin);
+        }
         if !started && p.x == self.last.x && p.y == self.last.y {
             return None;
         }
@@ -2023,6 +2234,13 @@ impl Canvas {
                 self.blend(rect.x + x, rect.y + y, c);
             }
         }
+    }
+    fn picture(&mut self, frame: &Frame, target: BoxRect, appearance: &str) {
+        let sheet = Sheet {
+            frame_width: frame.width, frame_height: frame.height,
+            columns: 1, rows: 1, frame_count: 1, fps: 1,
+        };
+        self.sprite(frame, target, &sheet, appearance);
     }
     fn sprite(&mut self, frame: &Frame, target: BoxRect, sheet: &Sheet, appearance: &str) {
         if frame.width == 0 || frame.height == 0 {
@@ -2395,6 +2613,11 @@ struct App {
     stop: Arc<AtomicBool>,
     last_refresh: Instant,
     position_writes: u64,
+    docked: Option<DockSide>,
+    dock_art: DockArt,
+    dock_blink: DockBlink,
+    dock_eye_closed: bool,
+    dock_slide: Option<DockSlide>,
 }
 impl App {
     fn new(hwnd: HWND, profile: PathBuf, isolated: bool, demo: bool) -> Result<Self, String> {
@@ -2486,6 +2709,11 @@ impl App {
             stop,
             last_refresh: Instant::now(),
             position_writes: 0,
+            docked: None,
+            dock_art: DockArt::read()?,
+            dock_blink: DockBlink::new(now_ms()),
+            dock_eye_closed: false,
+            dock_slide: None,
         };
         let area = work_area(POINT { x: 0, y: 0 });
         let position = app
@@ -2508,6 +2736,12 @@ impl App {
             dpi,
         ));
         app.play(app.pack.base());
+        if app.settings.edge_docking {
+            if let Some(dock) = app.settings.dock.clone() {
+                app.dock_to(dock.side, POINT { x: dock.anchor.x, y: dock.anchor.y });
+                app.begin_slide(DockPhase::Peek, dock.side);
+            }
+        }
         Ok(app)
     }
     fn px(&self, v: f64) -> i32 {
@@ -2572,8 +2806,194 @@ impl App {
             );
         }
     }
+    fn resize_viewport(&mut self, w: i32, h: i32) -> bool {
+        if self.canvas.w == w && self.canvas.h == h {
+            return true;
+        }
+        let Ok(surface) = Surface::new(w, h) else { return false; };
+        self.surface = surface;
+        self.canvas = Canvas::new(w, h);
+        self.dirty = true;
+        true
+    }
+    fn dock_to(&mut self, side: DockSide, anchor: POINT) -> bool {
+        self.dock_slide = None;
+        let area = work_area(anchor);
+        let target = dock_layout(
+            area, side, anchor.y, self.dpi, self.settings.scale,
+            self.dock_art.left.width as f64 / self.dock_art.left.height as f64,
+        );
+        if self.docked.is_none() {
+            self.save_position();
+        }
+        if !self.resize_viewport(target.w, target.h) {
+            return false;
+        }
+        self.docked = Some(side);
+        self.panel = false;
+        self.scroll = 0;
+        self.hold_until = 0;
+        self.dock_eye_closed = false;
+        self.dock_blink = DockBlink::new(now_ms());
+        self.move_to(POINT { x: target.x, y: target.y });
+        self.save_position();
+        self.dirty = true;
+        true
+    }
+    fn begin_slide(&mut self, phase: DockPhase, side: DockSide) {
+        self.paint();
+        let r = window_rect(self.hwnd);
+        let area = work_area(match phase {
+            DockPhase::HideBody { anchor } => anchor,
+            _ => POINT { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 },
+        });
+        let mut left = self.canvas.w;
+        let mut right = 0;
+        for (i, pixel) in self.canvas.pixels.iter().enumerate() {
+            if pixel >> 24 > 8 {
+                let x = i as i32 % self.canvas.w;
+                left = left.min(x);
+                right = right.max(x + 1);
+            }
+        }
+        let distance = match side {
+            DockSide::Left => -(r.left + right - area.left + 2).max(1),
+            DockSide::Right => (area.right - r.left - left + 2).max(1),
+        };
+        let duration = match phase {
+            DockPhase::HideBody { .. } => 0.16,
+            DockPhase::Peek => 0.17,
+            DockPhase::HidePeek { .. } => 0.10,
+            DockPhase::Reveal => 0.18,
+        };
+        self.dock_slide = Some(DockSlide {
+            phase, side, started: Instant::now(), duration,
+            pixels: self.canvas.pixels.clone(),
+            w: self.canvas.w, h: self.canvas.h, distance, area,
+        });
+        unsafe { SetTimer(self.hwnd, 1, 16, None); }
+        self.dirty = true;
+    }
+    fn start_docking(&mut self, side: DockSide, anchor: POINT) {
+        self.save_position();
+        let area = work_area(anchor);
+        let target = dock_layout(
+            area, side, anchor.y, self.dpi, self.settings.scale,
+            self.dock_art.left.width as f64 / self.dock_art.left.height as f64,
+        );
+        // Persist the intended final location even if Codex closes mid-slide.
+        self.settings.dock = Some(DockPlacement {
+            side, anchor: Position { x: target.x + target.w / 2, y: target.y },
+        });
+        self.settings.save(&self.profile);
+        self.begin_slide(DockPhase::HideBody { anchor }, side);
+    }
+    fn start_expanding(&mut self, quota: bool) {
+        if let Some(side) = self.docked {
+            self.dock_eye_closed = false;
+            self.begin_slide(DockPhase::HidePeek { quota }, side);
+        }
+    }
+    fn finish_slide(&mut self) {
+        if let Some(slide) = self.dock_slide.take() {
+            match slide.phase {
+                DockPhase::HideBody { anchor } => { self.dock_to(slide.side, anchor); }
+                DockPhase::HidePeek { quota } => { self.expand_from_dock(quota); }
+                _ => {}
+            }
+            unsafe { SetTimer(self.hwnd, 1, 33, None); }
+            self.dirty = true;
+        }
+    }
+    fn step_slide(&mut self) -> Result<bool, String> {
+        let Some(slide) = self.dock_slide.as_ref() else { return Ok(false); };
+        let t = slide.started.elapsed().as_secs_f64() / slide.duration;
+        if t >= 1.0 {
+            let slide = self.dock_slide.take().unwrap();
+            match slide.phase {
+                DockPhase::HideBody { anchor } => {
+                    self.dock_to(slide.side, anchor);
+                    self.begin_slide(DockPhase::Peek, slide.side);
+                    return self.step_slide();
+                }
+                DockPhase::HidePeek { quota } => {
+                    self.expand_from_dock(quota);
+                    self.begin_slide(DockPhase::Reveal, slide.side);
+                    return self.step_slide();
+                }
+                _ => {
+                    unsafe { SetTimer(self.hwnd, 1, 33, None); }
+                    self.dirty = true;
+                    return Ok(false);
+                }
+            }
+        }
+        if slide.w != self.canvas.w || slide.h != self.canvas.h {
+            self.finish_slide();
+            return Ok(false);
+        }
+        let reveal = matches!(slide.phase, DockPhase::Peek | DockPhase::Reveal);
+        let eased = slide_fraction(t, reveal);
+        let offset = (slide.distance as f64 * if reveal { 1.0 - eased } else { eased }).round() as i32;
+        let r = window_rect(self.hwnd);
+        let left = 0.max(offset).max(slide.area.left - r.left);
+        let right = slide.w.min(slide.w + offset).min(slide.area.right - r.left);
+        self.canvas.pixels.fill(0);
+        if right > left {
+            for y in 0..slide.h {
+                if r.top + y < slide.area.top || r.top + y >= slide.area.bottom {
+                    continue;
+                }
+                let source = (y * slide.w + left - offset) as usize;
+                let target = (y * slide.w + left) as usize;
+                let length = (right - left) as usize;
+                self.canvas.pixels[target..target + length]
+                    .copy_from_slice(&slide.pixels[source..source + length]);
+            }
+        }
+        self.present()?;
+        self.dirty = false;
+        Ok(true)
+    }
+    fn expand_from_dock(&mut self, quota: bool) -> bool {
+        let Some(side) = self.docked else { return true; };
+        let old = window_rect(self.hwnd);
+        let area = work_area(POINT {
+            x: (old.left + old.right) / 2,
+            y: (old.top + old.bottom) / 2,
+        });
+        let w = self.px(WIDTH as f64);
+        let h = self.px(HEIGHT as f64);
+        if !self.resize_viewport(w, h) {
+            return false;
+        }
+        self.docked = None;
+        self.settings.dock = None;
+        self.dock_eye_closed = false;
+        let head_y = self.px(HEIGHT as f64 - 43.0 - 480.0 * self.settings.scale * 360.0 / 640.0 * 0.74);
+        self.move_to(constrain(
+            POINT {
+                x: if side == DockSide::Left { area.left } else { area.right - w },
+                y: old.top + (old.bottom - old.top) / 4 - head_y,
+            },
+            area, w, h, self.dpi,
+        ));
+        self.save_position();
+        self.hold_until = 0;
+        let animation = self.choose(self.snapshot.state);
+        self.play(animation);
+        if quota && !self.panel {
+            self.toggle_panel();
+        }
+        self.dirty = true;
+        true
+    }
     fn restore(&mut self) {
+        self.finish_slide();
         self.end_press(true, cursor());
+        if !self.expand_from_dock(false) {
+            return;
+        }
         let area = work_area(POINT { x: 0, y: 0 });
         self.move_to(constrain(
             POINT {
@@ -2589,13 +3009,90 @@ impl App {
     }
     fn save_position(&mut self) {
         let r = window_rect(self.hwnd);
+        if let Some(side) = self.docked {
+            self.settings.dock = Some(DockPlacement {
+                side,
+                anchor: Position { x: (r.left + r.right) / 2, y: r.top },
+            });
+            self.settings.save(&self.profile);
+            return;
+        }
         self.settings.position = Some(Position {
             x: r.left,
             y: r.top,
         });
         self.settings.save(&self.profile);
     }
+    fn visible_sprite(&self) -> Option<BoxRect> {
+        let atlas = self.atlas.as_ref()?;
+        let frame = atlas.frames.get(self.frame)?;
+        let sheet = &self.pack.animations[atlas.index].spritesheet;
+        let width = 480.0 * self.settings.scale;
+        let height = width * 360.0 / 640.0;
+        let target = self.rect(
+            (WIDTH as f64 - width) / 2.0, HEIGHT as f64 - 43.0 - height, width, height,
+        );
+        let r = window_rect(self.hwnd);
+        Some(BoxRect {
+            x: r.left + target.x + (frame.x as f64 * target.w as f64 / sheet.frame_width as f64).floor() as i32,
+            y: r.top + target.y + (frame.y as f64 * target.h as f64 / sheet.frame_height as f64).floor() as i32,
+            w: (frame.width as f64 * target.w as f64 / sheet.frame_width as f64).ceil() as i32,
+            h: (frame.height as f64 * target.h as f64 / sheet.frame_height as f64).ceil() as i32,
+        })
+    }
     fn sample_drag(&mut self, point: POINT) {
+        if let Some(side) = self.docked {
+            let Some(press) = self.press.as_ref() else { return; };
+            let dx = point.x - press.cursor.x;
+            let dy = point.y - press.cursor.y;
+            if !press.allow_drag || (!press.moved && (dx as i64 * dx as i64 + dy as i64 * dy as i64) <= 25) {
+                return;
+            }
+            if dx.abs() > self.px(32.0) {
+                let previous = self.press.take().unwrap();
+                if !self.expand_from_dock(false) {
+                    self.press = Some(previous);
+                    return;
+                }
+                let origin = POINT {
+                    x: previous.cursor.x - self.canvas.w / 2,
+                    y: previous.cursor.y - self.px(
+                        HEIGHT as f64 - 43.0 - 480.0 * self.settings.scale * 360.0 / 640.0 * 0.74
+                    ),
+                };
+                let r = window_rect(self.hwnd);
+                self.press = Some(Press {
+                    cursor: previous.cursor, origin,
+                    last: POINT { x: r.left, y: r.top },
+                    moved: true, allow_drag: true,
+                    edge_drag: self.settings.edge_docking,
+                });
+                self.hold_until = 0;
+                let animation = self.choose(State::Drag);
+                self.play(animation);
+                self.sample_drag(point);
+                return;
+            }
+            let origin = press.origin;
+            let area = work_area(POINT {
+                x: origin.x + self.canvas.w / 2,
+                y: origin.y + self.canvas.h / 2,
+            });
+            let target = dock_layout(
+                area, side, origin.y + dy, self.dpi, self.settings.scale,
+                self.dock_art.left.width as f64 / self.dock_art.left.height as f64,
+            );
+            if let Some(press) = self.press.as_mut() {
+                press.moved = true;
+                press.last = POINT { x: target.x, y: target.y };
+            }
+            let r = window_rect(self.hwnd);
+            if r.left != target.x || r.top != target.y {
+                self.move_to(POINT { x: target.x, y: target.y });
+                self.position_writes += 1;
+            }
+            return;
+        }
         if let Some(press) = self.press.as_mut() {
             if let Some((position, started)) = press.sample(
                 point,
@@ -2623,6 +3120,25 @@ impl App {
         }
         if let Some(press) = self.press.take() {
             if press.moved {
+                if self.docked.is_some() {
+                    self.save_position();
+                    self.dirty = true;
+                    return;
+                }
+                if !cancel && self.settings.edge_docking {
+                    let area = work_area(point);
+                    if let Some(side) = dock_target(point, area, self.dpi, self.visible_sprite()) {
+                        let anchor = POINT {
+                            x: point.x,
+                            y: self.visible_sprite().map_or(
+                                point.y - self.px(42.0 * self.settings.scale / 0.8), |r| r.y
+                            ),
+                        };
+                        self.start_docking(side, anchor);
+                        self.dirty = true;
+                        return;
+                    }
+                }
                 self.save_position();
                 self.hold_until = 0;
                 let index = self.choose(self.snapshot.state);
@@ -2659,6 +3175,10 @@ impl App {
         }
     }
     fn click(&mut self, x: i32, y: i32) {
+        if self.docked.is_some() {
+            self.start_expanding(true);
+            return;
+        }
         if self.panel && self.panel_box.contains(x, y) {
             let r = self.panel_box;
             if x >= r.x + r.w - self.px(32.0) && y < r.y + self.px(28.0) {
@@ -2696,7 +3216,7 @@ impl App {
                 Notice::State(state) => {
                     let before = self.snapshot.state;
                     self.snapshot = state;
-                    if before != self.snapshot.state {
+                    if before != self.snapshot.state && self.docked.is_none() && self.dock_slide.is_none() {
                         if self.snapshot.state == State::Idle {
                             self.idle = IdleSchedule::new(&self.settings.motion, now_ms());
                         }
@@ -2750,6 +3270,23 @@ impl App {
         if self.press.is_some() {
             self.sample_drag(cursor());
         }
+        if self.step_slide()? {
+            return Ok(());
+        }
+        if self.docked.is_some() {
+            let closed = self.dock_blink.closed(
+                now_ms(), !self.paused && self.settings.motion != "still",
+            );
+            if closed != self.dock_eye_closed {
+                self.dock_eye_closed = closed;
+                self.dirty = true;
+            }
+            if self.dirty {
+                self.render()?;
+                self.dirty = false;
+            }
+            return Ok(());
+        }
         if self.panel && self.last_refresh.elapsed() >= Duration::from_secs(60) {
             self.refresh();
         }
@@ -2790,6 +3327,25 @@ impl App {
         Ok(())
     }
     fn render(&mut self) -> Result<(), String> {
+        if self.dock_slide.is_some() && self.step_slide()? {
+            return Ok(());
+        }
+        self.paint();
+        self.present()
+    }
+    fn paint(&mut self) {
+        if self.docked.is_some() {
+            self.render_docked();
+            return;
+        }
+        if self.frame == usize::MAX {
+            if let Some(atlas) = &self.atlas {
+                self.frame = frame_at(
+                    &self.pack.animations[atlas.index].spritesheet,
+                    self.started.elapsed().as_millis() as u64, false,
+                );
+            }
+        }
         let dpi = self.dpi;
         let px = |v: f64| (v * dpi).round() as i32;
         self.canvas.pixels.fill(0);
@@ -2900,6 +3456,46 @@ impl App {
         if self.panel {
             self.draw_panel(sprite_h);
         }
+    }
+    fn render_docked(&mut self) {
+        let side = self.docked.unwrap();
+        self.canvas.pixels.fill(0);
+        self.canvas.clip = None;
+        self.panel_box = BoxRect { x: 0, y: 0, w: 0, h: 0 };
+        let frame = if side == DockSide::Left { &self.dock_art.left } else { &self.dock_art.right };
+        self.canvas.picture(frame, BoxRect { x: 0, y: 0, w: self.canvas.w, h: self.canvas.h }, &self.settings.appearance);
+        if self.dock_eye_closed {
+            let mut eye = self.dock_art.eye;
+            if side == DockSide::Right {
+                eye.x = frame.width as i32 - eye.x - eye.w;
+            }
+            let target = BoxRect {
+                x: (eye.x as f64 * self.canvas.w as f64 / frame.width as f64).round() as i32,
+                y: (eye.y as f64 * self.canvas.h as f64 / frame.height as f64).round() as i32,
+                w: (eye.w as f64 * self.canvas.w as f64 / frame.width as f64).round() as i32,
+                h: (eye.h as f64 * self.canvas.h as f64 / frame.height as f64).round() as i32,
+            };
+            let closed = if side == DockSide::Left { &self.dock_art.blink_left } else { &self.dock_art.blink_right };
+            self.canvas.picture(closed, target, &self.settings.appearance);
+        }
+        let dot = self.px(6.0).max(3);
+        self.badge_box = BoxRect {
+            x: if side == DockSide::Left { self.canvas.w - dot - 1 } else { 1 },
+            y: self.px(6.0), w: dot, h: dot,
+        };
+        let color = if !self.snapshot.connected {
+            [156, 174, 170, 255]
+        } else {
+            match self.snapshot.state {
+                State::Waiting => [224, 172, 73, 255],
+                State::Error => [215, 121, 110, 255],
+                State::Working => [105, 180, 161, 255],
+                _ => [162, 202, 189, 230],
+            }
+        };
+        self.canvas.round_rect(self.badge_box, dot / 2, color);
+    }
+    fn present(&mut self) -> Result<(), String> {
         self.surface.pixels().copy_from_slice(&self.canvas.pixels);
         HIT.with(|hit| {
             let mut hit = hit.borrow_mut();
@@ -3364,6 +3960,10 @@ impl App {
             );
             AppendMenuW(menu, MF_SEPARATOR, 0, null());
             item(menu, 4, "恢复到屏幕内", false);
+            item(menu, 11, "侧边吸附", self.settings.edge_docking);
+            if self.docked.is_some() {
+                item(menu, 12, "展开桌宠", false);
+            }
             item(menu, 5, "随 Codex 启停", self.settings.auto_start);
             item(menu, 6, "重新连接", false);
             item(menu, 7, "素材来源 · hunmer/aboutme-pets", false);
@@ -3389,6 +3989,7 @@ impl App {
         }
     }
     fn command(&mut self, id: usize) {
+        self.finish_slide();
         match id{
         1=>{if !self.panel{self.toggle_panel();}else{self.refresh();}},2=>{let mut schedule=IdleSchedule::new("lively",0);let index=choose(&self.pack,State::Idle,self.atlas.as_ref().map(|a|a.index),"lively",&mut schedule);self.interact(index);},
         3=>{self.paused=!self.paused;if !self.paused{self.started=Instant::now();self.frame=usize::MAX;}},4=>self.restore(),
@@ -3396,9 +3997,11 @@ impl App {
         6=>{if let Some(bridge)=&self.bridge{let _=bridge.send(BridgeCommand::Reconnect);}},7=>unsafe{ShellExecuteW(self.hwnd,wide("open").as_ptr(),wide(UPSTREAM).as_ptr(),null(),null(),SW_SHOWNORMAL);},
         8=>message_box(&format!("Codex 白龙桌宠 Rust {VERSION}\n\n动画素材：hunmer/aboutme-pets · pets/gpt\n92 张原始 WebP 无损封装于本 EXE。角色与动画权利归原权利人，不另行授予素材许可。\n\n原生 Win32 + Rust，无 Electron 或 WebView 依赖。\nRust 依赖采用 MIT / Apache-2.0 等许可，完整说明可通过 --licenses 文件路径 导出。\n独立社区项目，与 OpenAI 无隶属关系。")),
         9=>unsafe{DestroyWindow(self.hwnd);},10=>{signal(&self.profile,"StopWatcher");unsafe{DestroyWindow(self.hwnd);}},
+        11=>{self.settings.edge_docking=!self.settings.edge_docking;if !self.settings.edge_docking{self.expand_from_dock(false);self.settings.dock=None;}self.settings.save(&self.profile);},
+        12=>{self.start_expanding(false);},
         100..=103=>{self.settings.motion=["still","quiet","normal","lively"][id-100].into();self.idle=IdleSchedule::new(&self.settings.motion,now_ms());self.settings.save(&self.profile);if self.snapshot.state==State::Idle{self.hold_until=0;let index=self.choose(State::Idle);self.play(index);}},
         200..=202=>{self.settings.appearance=["original","clear","vivid"][id-200].into();self.settings.save(&self.profile);},
-        300..=302=>{self.settings.scale=[0.8,1.0,1.2][id-300];self.settings.save(&self.profile);},
+        300..=302=>{self.settings.scale=[0.8,1.0,1.2][id-300];self.settings.save(&self.profile);if let Some(side)=self.docked{let r=window_rect(self.hwnd);self.dock_to(side,POINT{x:(r.left+r.right)/2,y:r.top});}},
         1000.. =>{let index=id-1000;if index<self.pack.animations.len(){self.interact(index);}},_=>{}
     }
         self.dirty = true;
@@ -3406,6 +4009,14 @@ impl App {
     fn event(&mut self, event: UiEvent) -> Result<(), String> {
         match event {
             UiEvent::Down(point) => {
+                let hiding = self.dock_slide.as_ref().is_some_and(|s|
+                    matches!(s.phase, DockPhase::HideBody { .. } | DockPhase::HidePeek { .. }));
+                self.finish_slide();
+                if hiding {
+                    self.press = None;
+                    unsafe { ReleaseCapture(); }
+                    return Ok(());
+                }
                 let r = window_rect(self.hwnd);
                 let x = point.x - r.left;
                 let y = point.y - r.top;
@@ -3422,16 +4033,19 @@ impl App {
                     moved: false,
                     allow_drag: !(self.panel && self.panel_box.contains(x, y))
                         && !self.badge_box.contains(x, y),
+                    edge_drag: self.settings.edge_docking,
                 });
             }
             UiEvent::Up(point) => self.end_press(false, point),
             UiEvent::Cancel => self.end_press(true, cursor()),
             UiEvent::Escape => {
+                self.finish_slide();
                 self.end_press(true, cursor());
                 self.panel = false;
                 self.dirty = true;
             }
             UiEvent::Menu(point) => {
+                self.finish_slide();
                 self.end_press(true, point);
                 self.menu(point);
             }
@@ -3442,9 +4056,16 @@ impl App {
                 }
             }
             UiEvent::Dpi(dpi) => {
+                self.finish_slide();
                 let dpi = dpi.max(96) as f64 / 96.0;
                 if (dpi - self.dpi).abs() > 0.01 {
                     self.dpi = dpi;
+                    if let Some(side) = self.docked {
+                        let r = window_rect(self.hwnd);
+                        self.dock_to(side, POINT { x: (r.left + r.right) / 2, y: r.top });
+                        self.dirty = true;
+                        return Ok(());
+                    }
                     let w = self.px(WIDTH as f64);
                     let h = self.px(HEIGHT as f64);
                     self.surface = Surface::new(w, h)?;
@@ -3469,6 +4090,171 @@ impl App {
         }
         Ok(())
     }
+}
+fn settle_dock_slide(app: &mut App, dir: &Path, tag: &str) -> Result<(), String> {
+    if app.dock_slide.is_none() {
+        return Err(format!("{tag}: transition did not start"));
+    }
+    let started = Instant::now();
+    let mut frames = 0;
+    let mut changed = 0;
+    let mut previous = Vec::new();
+    while app.dock_slide.is_some() {
+        if started.elapsed() > Duration::from_secs(2) {
+            return Err(format!("{tag}: transition did not finish"));
+        }
+        app.tick()?;
+        if app.canvas.pixels != previous {
+            changed += 1;
+        }
+        if frames == 4 {
+            app.canvas.save_bmp(&dir.join(format!("{tag}-transition.bmp")))?;
+        }
+        previous = app.canvas.pixels.clone();
+        frames += 1;
+        thread::sleep(Duration::from_millis(16));
+    }
+    if changed < 3 {
+        return Err(format!("{tag}: transition skipped intermediate frames"));
+    }
+    Ok(())
+}
+fn dock_smoke(app: &mut App, dir: &Path) -> Result<(), String> {
+    if !app.demo || !app.isolated {
+        return Err("--dock-smoke requires --demo and an isolated --profile".into());
+    }
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let area = work_area(POINT { x: 0, y: 0 });
+    let mut cases = Vec::<Value>::new();
+    for side in [DockSide::Left, DockSide::Right] {
+        let tag = if side == DockSide::Left { "left" } else { "right" };
+        if !app.dock_to(side, POINT {
+            x: if side == DockSide::Left { area.left + 1 } else { area.right - 1 },
+            y: area.top + (area.bottom - area.top) / 3,
+        }) {
+            return Err("Dock viewport could not be allocated".into());
+        }
+        app.render()?;
+        let r = window_rect(app.hwnd);
+        if r.left < area.left || r.right > area.right || r.top < area.top || r.bottom > area.bottom
+            || (side == DockSide::Left && r.left != area.left)
+            || (side == DockSide::Right && r.right != area.right)
+        {
+            return Err(format!("{tag}: dock left the monitor work area"));
+        }
+        app.canvas.save_bmp(&dir.join(format!("{tag}-open.bmp")))?;
+        let open = app.canvas.pixels.clone();
+        app.dock_eye_closed = true;
+        app.render()?;
+        app.canvas.save_bmp(&dir.join(format!("{tag}-blink.bmp")))?;
+        let art = &app.dock_art.left;
+        let mut eye = app.dock_art.eye;
+        if side == DockSide::Right {
+            eye.x = art.width as i32 - eye.x - eye.w;
+        }
+        let eye_region = BoxRect {
+            x: (eye.x as f64 * app.canvas.w as f64 / art.width as f64).floor() as i32 - 2,
+            y: (eye.y as f64 * app.canvas.h as f64 / art.height as f64).floor() as i32 - 2,
+            w: (eye.w as f64 * app.canvas.w as f64 / art.width as f64).ceil() as i32 + 4,
+            h: (eye.h as f64 * app.canvas.h as f64 / art.height as f64).ceil() as i32 + 4,
+        };
+        let mut changed = 0;
+        for (i, pixel) in app.canvas.pixels.iter().enumerate() {
+            if *pixel != open[i] {
+                changed += 1;
+                if !eye_region.contains(i as i32 % app.canvas.w, i as i32 / app.canvas.w) {
+                    return Err(format!("{tag}: blink moved artwork outside the eye"));
+                }
+            }
+        }
+        if changed == 0 {
+            return Err(format!("{tag}: blink did not change the eye"));
+        }
+        app.dock_eye_closed = false;
+        app.render()?;
+        let p = POINT { x: r.left + app.canvas.w / 2, y: r.top + app.canvas.h / 4 };
+        app.event(UiEvent::Down(p))?;
+        let writes = app.position_writes;
+        for _ in 0..128 {
+            app.sample_drag(p);
+        }
+        let held = window_rect(app.hwnd);
+        if (r.left, r.top, r.right, r.bottom) != (held.left, held.top, held.right, held.bottom)
+            || app.position_writes != writes
+        {
+            return Err(format!("{tag}: a stationary hold moved the pet"));
+        }
+        app.end_press(false, p);
+        settle_dock_slide(app, dir, &format!("{tag}-expand"))?;
+        if app.docked.is_some() || !app.panel
+            || app.canvas.w != app.px(WIDTH as f64) || app.canvas.h != app.px(HEIGHT as f64)
+        {
+            return Err(format!("{tag}: clicking did not expand and open quota"));
+        }
+        app.panel = false;
+        app.dock_to(side, p);
+        let r = window_rect(app.hwnd);
+        let p = POINT { x: r.left + app.canvas.w / 2, y: r.top + app.canvas.h / 4 };
+        app.event(UiEvent::Down(p))?;
+        let vertical = POINT { x: p.x, y: p.y + app.px(24.0) };
+        app.sample_drag(vertical);
+        app.end_press(false, vertical);
+        if app.docked != Some(side) || Settings::load(&app.profile).dock.is_none() {
+            return Err(format!("{tag}: vertical docking or persistence failed"));
+        }
+        let r = window_rect(app.hwnd);
+        let p = POINT { x: r.left + app.canvas.w / 2, y: r.top + app.canvas.h / 4 };
+        app.event(UiEvent::Down(p))?;
+        let inward = POINT {
+            x: p.x + app.px(if side == DockSide::Left { 180.0 } else { -180.0 }),
+            y: p.y,
+        };
+        app.sample_drag(inward);
+        app.end_press(false, inward);
+        if app.docked.is_some() || app.canvas.w != app.px(WIDTH as f64) {
+            return Err(format!("{tag}: dragging inward did not expand"));
+        }
+        cases.push(json!({
+            "side":side, "stable":true, "boundedToWorkArea":true, "holdSamples":128,
+            "blinkChangedOnlyEye":true, "blinkChangedPixels":changed,
+            "clickOpenedQuota":true, "verticalDragStayedDocked":true,
+            "expandTransitionHadIntermediateFrames":true,
+            "dragInwardExpanded":true, "savedDockRestorable":true,
+        }));
+    }
+    for side in [DockSide::Left, DockSide::Right] {
+        let r = window_rect(app.hwnd);
+        let p = POINT {
+            x: r.left + app.canvas.w / 2,
+            y: r.top + app.px(420.0),
+        };
+        app.event(UiEvent::Down(p))?;
+        let edge = POINT {
+            x: if side == DockSide::Left { area.left + 1 } else { area.right - 1 },
+            y: area.top + (area.bottom - area.top) / 2,
+        };
+        app.sample_drag(edge);
+        app.end_press(false, edge);
+        settle_dock_slide(app, dir, &format!("{side:?}-dock"))?;
+        if app.docked != Some(side) {
+            return Err(format!("{side:?}: releasing near the edge did not dock"));
+        }
+        app.expand_from_dock(false);
+    }
+    app.dock_to(DockSide::Left, POINT { x: area.left + 1, y: area.top + 100 });
+    app.command(11);
+    if app.settings.edge_docking || app.docked.is_some() {
+        return Err("Disabling side docking did not restore the pet".into());
+    }
+    app.command(11);
+    app.restore();
+    cases.push(json!({"case":"automatic-edge-release-and-disable","stable":true,
+        "dockTransitionHadIntermediateFrames":true}));
+    write_json(&dir.join("dock-smoke.json"), &json!({
+        "version":VERSION, "passed":true, "cases":cases,
+        "dpi":app.dpi, "animations":app.pack.animations.len(),
+        "singleExecutable":true, "realCodexWasNotClosed":true,
+    }))
 }
 impl Drop for App {
     fn drop(&mut self) {
@@ -3526,7 +4312,7 @@ fn gui(args: &[String], profile: PathBuf) -> Result<(), String> {
         CreateWindowExW(
             extended_style,
             class.as_ptr(),
-            wide(TITLE).as_ptr(),
+            wide(if ui_test { "Codex 白龙桌宠 · 吸附测试" } else { TITLE }).as_ptr(),
             WS_POPUP,
             100,
             50,
@@ -3547,12 +4333,13 @@ fn gui(args: &[String], profile: PathBuf) -> Result<(), String> {
     }
     let mut app = App::new(hwnd, profile, isolated, demo)?;
     let smoke = option(args, "--smoke").map(PathBuf::from);
+    let dock_test = option(args, "--dock-smoke").map(PathBuf::from);
     let since = Instant::now();
     let mut smoke_stage = 0;
     let mut diagnostics_at = Instant::now();
     let mut evidence = Vec::<Value>::new();
     unsafe {
-        SetTimer(hwnd, 1, 33, None);
+        SetTimer(hwnd, 1, if app.dock_slide.is_some() { 16 } else { 33 }, None);
     }
     let mut message: MSG = unsafe { zeroed() };
     loop {
@@ -3582,11 +4369,21 @@ fn gui(args: &[String], profile: PathBuf) -> Result<(), String> {
             continue;
         }
         app.tick()?;
+        if let Some(dir) = &dock_test {
+            if app.atlas.is_some() {
+                dock_smoke(&mut app, dir)?;
+                unsafe { DestroyWindow(hwnd); }
+                continue;
+            }
+            if since.elapsed() > Duration::from_secs(30) {
+                return Err("Dock smoke test timed out loading the original animation".into());
+            }
+        }
         if ui_test && diagnostics_at.elapsed() >= Duration::from_millis(500) {
             let r = window_rect(hwnd);
             let _ = write_json(
                 &app.profile.join("native-state.json"),
-                &json!({"visible":unsafe{IsWindowVisible(hwnd)}!=0,"bounds":{"x":r.left,"y":r.top,"width":r.right-r.left,"height":r.bottom-r.top},"dpi":app.dpi,"panel":app.panel,"frame":app.frame,"animation":app.atlas.as_ref().map(|a|&app.pack.animations[a.index].id),"motion":app.settings.motion,"appearance":app.settings.appearance,"positionWrites":app.position_writes,"state":app.snapshot}),
+                &json!({"visible":unsafe{IsWindowVisible(hwnd)}!=0,"bounds":{"x":r.left,"y":r.top,"width":r.right-r.left,"height":r.bottom-r.top},"dpi":app.dpi,"panel":app.panel,"frame":app.frame,"animation":app.atlas.as_ref().map(|a|&app.pack.animations[a.index].id),"motion":app.settings.motion,"appearance":app.settings.appearance,"edgeDocking":app.settings.edge_docking,"docked":app.docked,"dockBlinkClosed":app.dock_eye_closed,"positionWrites":app.position_writes,"state":app.snapshot}),
             );
             diagnostics_at = Instant::now();
         }
@@ -3731,7 +4528,7 @@ fn run() -> Result<(), String> {
 fn main() {
     if let Err(error) = run() {
         let args: Vec<String> = std::env::args().collect();
-        if let Some(dir) = option(&args, "--smoke") {
+        if let Some(dir) = option(&args, "--smoke").or_else(|| option(&args, "--dock-smoke")) {
             let _ = write_json(
                 &PathBuf::from(dir).join("error.json"),
                 &json!({"error":error}),
@@ -3746,6 +4543,144 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dock_slide_easing_has_endpoints_and_monotonic_intermediate_frames() {
+        for reveal in [false, true] {
+            assert_eq!(slide_fraction(-1.0, reveal), 0.0);
+            assert_eq!(slide_fraction(2.0, reveal), 1.0);
+            let mut previous = 0.0;
+            for frame in 1..60 {
+                let current = slide_fraction(frame as f64 / 60.0, reveal);
+                assert!(current > previous && current < 1.0);
+                previous = current;
+            }
+        }
+    }
+    #[test]
+    fn side_docking_stays_inside_each_monitor_at_all_supported_scales() {
+        for area in [
+            RECT { left: 0, top: 0, right: 1920, bottom: 1040 },
+            RECT { left: -1920, top: -1080, right: 0, bottom: -40 },
+            RECT { left: 1920, top: -200, right: 3200, bottom: 800 },
+        ] {
+            for dpi in [1.0, 1.25, 1.5, 2.0] {
+                for scale in [0.8, 1.0, 1.2] {
+                    for side in [DockSide::Left, DockSide::Right] {
+                        for y in [-1000000, area.top + 100, 1000000] {
+                            let r = dock_layout(area, side, y, dpi, scale, 466.0 / 1149.0);
+                            assert!(r.w > 0 && r.h > 0);
+                            assert!(r.x >= area.left && r.x + r.w <= area.right);
+                            assert!(r.y >= area.top && r.y + r.h <= area.bottom);
+                            assert_eq!(
+                                if side == DockSide::Left { r.x } else { r.x + r.w },
+                                if side == DockSide::Left { area.left } else { area.right },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn side_docking_is_triggered_only_near_a_horizontal_edge() {
+        let area = RECT { left: -1920, top: 0, right: 0, bottom: 1040 };
+        for dpi in [1.0, 1.25, 1.5, 2.0] {
+            assert_eq!(dock_side(POINT { x: -1919, y: 400 }, area, dpi), Some(DockSide::Left));
+            assert_eq!(dock_side(POINT { x: -1, y: 400 }, area, dpi), Some(DockSide::Right));
+            assert_eq!(dock_side(POINT { x: -960, y: 1 }, area, dpi), None);
+            assert_eq!(dock_side(POINT { x: -960, y: 1039 }, area, dpi), None);
+            assert_eq!(dock_side(POINT { x: -1919, y: -1 }, area, dpi), None);
+        }
+    }
+    #[test]
+    fn painted_character_reaches_the_edge_before_the_drag_cursor() {
+        let area = RECT { left: 0, top: 0, right: 1920, bottom: 1040 };
+        assert_eq!(dock_target(
+            POINT { x: 145, y: 400 }, area, 1.0,
+            Some(BoxRect { x: 20, y: 310, w: 180, h: 220 }),
+        ), Some(DockSide::Left));
+        assert_eq!(dock_target(
+            POINT { x: 1775, y: 400 }, area, 1.0,
+            Some(BoxRect { x: 1720, y: 310, w: 180, h: 220 }),
+        ), Some(DockSide::Right));
+        assert_eq!(dock_target(
+            POINT { x: 200, y: 400 }, area, 1.0,
+            Some(BoxRect { x: 150, y: 310, w: 180, h: 220 }),
+        ), None);
+        let mut press = Press {
+            cursor: POINT { x: 800, y: 400 },
+            origin: POINT { x: 540, y: 50 },
+            last: POINT { x: 540, y: 50 },
+            moved: false, allow_drag: true, edge_drag: true,
+        };
+        let (position, _) = press.sample(POINT { x: 90, y: 400 }, area, 520, 620, 1.0).unwrap();
+        assert_eq!(position.x, -170);
+        assert_eq!(position.y, 50);
+        for _ in 0..128 {
+            assert!(press.sample(POINT { x: 90, y: 400 }, area, 520, 620, 1.0).is_none());
+        }
+    }
+    #[test]
+    fn dock_blink_is_short_infrequent_and_respects_pause() {
+        let mut blink = DockBlink { next: 1000, until: 0 };
+        assert!(!blink.closed(999, true));
+        assert!(blink.closed(1000, true));
+        assert!(blink.closed(1139, true));
+        assert!(!blink.closed(1140, true));
+        assert!((5500..9000).contains(&blink.next));
+        assert!(!blink.closed(1200, false));
+        assert!(!blink.closed(1201, true));
+        assert!(!blink.closed(5000, false));
+        assert!(!blink.closed(5001, true));
+    }
+    #[test]
+    fn dock_art_has_alpha_and_blinks_without_replacing_the_approved_body() {
+        let art = DockArt::read().unwrap();
+        assert!(art.left.width > 300 && art.left.height > art.left.width);
+        assert_eq!((art.left.width, art.left.height), (art.right.width, art.right.height));
+        for y in [0, art.left.height / 2, art.left.height - 1] {
+            for x in [0, art.left.width / 2, art.left.width - 1] {
+                let a = (y * art.left.width + x) * 4;
+                let b = (y * art.right.width + art.right.width - 1 - x) * 4;
+                assert_eq!(&art.left.pixels[a..a + 4], &art.right.pixels[b..b + 4]);
+            }
+        }
+        assert!(art.left.pixels.chunks_exact(4).any(|p| p[3] == 0));
+        assert!(art.left.pixels.chunks_exact(4).any(|p| p[3] == 255));
+        assert!(art.blink_left.width < art.left.width / 2);
+        assert!(art.blink_left.height < art.left.height / 4);
+        assert!(art.blink_left.pixels.chunks_exact(4).any(|p| p[3] == 0));
+        assert!(art.blink_left.pixels.chunks_exact(4).any(|p| p[3] >= 250));
+    }
+    #[test]
+    fn dock_palette_matches_silver_hair_without_desaturating_skin_or_iris() {
+        let hair = [235, 221, 245, 253];
+        let silver = dock_color(hair);
+        assert!(silver[0] - silver[1] < hair[0] - hair[1]);
+        assert!(silver[2] - silver[1] < hair[2] - hair[1]);
+        assert_eq!(silver[3], hair[3]);
+        assert_eq!(dock_color([255, 225, 217, 254]), [255, 225, 217, 254]);
+        assert_eq!(dock_color([161, 119, 207, 253]), [161, 119, 207, 253]);
+        assert_eq!(dock_color([213, 193, 235, 253]), [213, 193, 235, 253]);
+        assert_eq!(dock_color([255, 255, 255, 0]), [255, 255, 255, 0]);
+    }
+    #[test]
+    fn old_settings_keep_their_position_and_support_dock_persistence() {
+        let mut settings: Settings = serde_json::from_value(json!({
+            "scale":0.8, "position":{"x":1395,"y":305}, "autoStart":false,
+            "motion":"quiet", "appearance":"clear"
+        })).unwrap();
+        assert!(settings.edge_docking);
+        assert!(!settings.auto_start);
+        assert_eq!(settings.position.as_ref().unwrap().x, 1395);
+        settings.dock = Some(DockPlacement {
+            side: DockSide::Right, anchor: Position { x: -1, y: 270 },
+        });
+        let restored: Settings = serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
+        assert_eq!(restored.dock.as_ref().unwrap().side, DockSide::Right);
+        assert_eq!(restored.dock.as_ref().unwrap().anchor.x, -1);
+        assert_eq!(restored.position.as_ref().unwrap().y, 305);
+    }
     #[test]
     fn cli_session_origins_exclude_desktop_and_unknown_vscode_clients() {
         let cases: Vec<Value> =
@@ -4102,6 +5037,7 @@ mod tests {
             last: POINT { x: 700, y: 70 },
             moved: false,
             allow_drag: true,
+            edge_drag: false,
         };
         let area = RECT {
             left: 0,
@@ -4131,6 +5067,7 @@ mod tests {
             last: POINT { x: 700, y: 70 },
             moved: false,
             allow_drag: true,
+            edge_drag: false,
         };
         for i in 0..1000 {
             let x = if i % 2 == 0 { 980 } else { 990 };

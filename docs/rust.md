@@ -4,7 +4,7 @@
 
 程序图标取自白龙“元气挥手”动作第 48 帧的笑脸头像，保留透明背景，内嵌 16–256 像素的十种尺寸。来源和裁剪记录见 [assets/ICON_SOURCE.json](../assets/ICON_SOURCE.json)，图标不需要作为外部文件放在 EXE 旁边。
 
-当前预览版：**[v0.5.0-preview.4](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.5.0-preview.4)** · [下载 EXE](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.4/CodexPet-Rust-Windows-x64-v0.5.0-preview.4.exe) · [SHA-256 校验文件](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.4/CodexPet-Rust-Windows-x64-v0.5.0-preview.4.exe.sha256)
+当前预览版：**[v0.5.0-preview.5](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.5.0-preview.5)** · [下载 EXE](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.5/CodexPet-Rust-Windows-x64-v0.5.0-preview.5.exe) · [SHA-256 校验文件](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.5/CodexPet-Rust-Windows-x64-v0.5.0-preview.5.exe.sha256)
 
 ## 使用
 
@@ -16,6 +16,8 @@ Rust 版升级时，先在旧版右键选择“退出并关闭后台监听”，
 
 - 点击角色或状态条展开额度卡片；支持多额度窗口、重置时间、手动刷新和缓存提示。
 - 按住拖动，右键恢复到屏幕内。窗口按 Windows 原生屏幕坐标移动，静止长按不会反复写入位置。
+- 0.5.0-preview.5 起支持左右侧边吸附：拖到角色碰近屏幕工作区左右边缘后松开，会收成半边探头、双手、小翅膀和卷尾。点击探头会展开并显示额度；沿边缘上下拖可调整位置，向屏幕内拖离可恢复完整桌宠。右键可关闭“侧边吸附”或选择“展开桌宠”。
+- 侧边状态约每 4.5–8 秒自然眨眼一次，不晃动头发、手、翅膀或尾巴；静态模式和暂停会停止眨眼。工作、待确认和异常状态通过小圆点继续同步，收起位置会保留，支持多屏及不同 DPI。
 - 右键调整待机动态、画面效果、大小、暂停播放，或从 92 个动作中选择预览。
 - 右键“退出桌宠（本次 Codex）”后，本次 Codex 会话内不会自动重新出现。
 - 右键关闭“随 Codex 启停”取消登录启动和后台监听；“退出并关闭后台监听”只结束当前后台监听。
@@ -28,6 +30,8 @@ Rust 版升级时，先在旧版右键选择“退出并关闭后台监听”，
 0.5.0-preview.3 在额度卡片左下角以 10 像素小字显示“可重置 N 次”，读取接口的实际可用重置次数。接口未返回次数时显示“重置次数 —”，不把未知值当作零；底栏固定在卡片下方，滚动额度内容时仍可见。
 
 0.5.0-preview.4 将笑脸头像图标内嵌到 EXE，并供程序窗口使用；构建脚本自动验证十种尺寸的资源，确认程序代码区未被图标写入改变。GitHub Windows CI 构建后保存 EXE 与校验文件，发布使用同一份已验证产物。
+
+0.5.0-preview.5 新增原生侧边吸附和眨眼。收起约 330 毫秒、展开约 280 毫秒，采用沿边缘滑入滑出的缓动过渡，保留角色颜色和透明度；过渡结束后恢复低频刷新。探头姿势依据原角色参考、按用户指导通过内置 imagegen 生成，与上游原始 92 个动作分开记录；原始 PNG、无损 WebP、定稿要求与来源见 `assets/EDGE_SOURCE.json`。运行时只叠加闭眼帧的眼部区域，避免眨眼时整张图晃动。
 
 ## 无损封装
 
@@ -57,7 +61,7 @@ CLI 模式使用本地 `sessions/**/rollout-*.jsonl` 增量读取任务状态，
 
 `--cli --probe 输出.json` 可检查日志状态和实时账号额度；`logUsage` 仅供比较日志快照，`usageError` 记录实时查询是否失败。`--cli --owner-probe 输出.json` 检查 CLI 进程识别。初始回读与单次读取均有上限，保留不完整行的文件偏移而不在内存保存正文。测试覆盖任务事件别名、完成/中断、历史状态过滤、分段写入、超长行跳过、文件截断/删除和来源隔离。真实 CLI 的审批及错误事件通常不落盘，不承诺与 Desktop 相同的提示精度；相关上游实现见 [事件协议](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs) 和 [日志持久化策略](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/policy.rs)。
 
-20 项 Rust 测试覆盖原始素材字节一致性、消息分帧、只读工具限制、状态优先级、额度缺失与边界值、正文丢弃、CLI 日志、待机动态、稳定颜色帧、静止长按、拖动坐标和透明合成。会话来源及 32 个命令行反例与 Electron 版共用，验证 Desktop 隔离、提示词、选项值、Windows 引号与中文参数。两版进程识别均使用 `CommandLineToArgvW`，跳过全局选项的值后只判断第一个位置参数；Rust 通过 WMI 获取的命令行以 UTF-8 JSON 传递，避免中文编码丢失。原生窗口测试另行验证长按 128 次采样不写入位置；独立模拟宿主验证随宿主启动、退出，以及手动退出后本会话不重开。真实 Codex 未在测试中关闭，Windows 注销和其他电脑的验收仍需另行进行。
+28 项 Rust 测试覆盖原始素材字节一致性、消息分帧、只读工具限制、状态优先级、额度缺失与边界值、正文丢弃、CLI 日志、待机动态、稳定颜色帧、静止长按、拖动坐标和透明合成。会话来源及 32 个命令行反例与 Electron 版共用，验证 Desktop 隔离、提示词、选项值、Windows 引号与中文参数。两版进程识别均使用 `CommandLineToArgvW`，跳过全局选项的值后只判断第一个位置参数；Rust 通过 WMI 获取的命令行以 UTF-8 JSON 传递，避免中文编码丢失。原生窗口测试另行验证长按 128 次采样不写入位置；独立模拟宿主验证随宿主启动、退出，以及手动退出后本会话不重开。真实 Codex 未在测试中关闭，Windows 注销和其他电脑的验收仍需另行进行。
 
 桌面自动化在隔离的 `--ui-test` 窗口中实际点击打开额度卡片，并拖动角色，核对位置写入设置文件、窗口尺寸保持 650×775 物理像素。正常模式的透明绘制和隐藏任务栏样式由原生窗口检查覆盖。真实 Rust 管道检查读到了当前工作任务及账号额度；界面交互检查使用演示额度，与真实账号数据验证分开记录。
 

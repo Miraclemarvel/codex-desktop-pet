@@ -11,6 +11,8 @@
 
 Rust EXE 图标由该动作包“元气挥手”的第 48 帧头像裁剪、缩放而成，保留原图颜色与透明背景；源文件校验值、帧号及裁剪范围记录于 `assets/ICON_SOURCE.json`。
 
+Rust 0.5.0-preview.5 的侧边探头素材与闭眼帧，由 OpenAI 内置 imagegen 依据该角色画面参考、多轮用户指导辅助生成，属于本项目新增的参考衍生图，并非上游原始动作。半边头部、手、翅膀与尾巴使用该新增图；眨眼只合成闭眼帧的眼睛区域。PNG 原图、逐像素无损的 WebP、定稿要求和生成记录分别保存在 `assets/edge-peek*.png`、`assets/edge-peek*.webp`、`assets/edge-peek-prompt.txt` 和 `assets/EDGE_SOURCE.json`。原始 92 张 WebP 没有修改。发饰使用 ChatGPT 结形标志，相关标志归其权利人所有。
+
 角色与动画的权利归原权利人所有，本项目不把它们声明为原创，也不另行授予素材许可。截至 2026-11-12，上游根仓库没有统一的 LICENSE 文件，GPT 目录也未单列许可文件。其他角色包的素材限制或上游工具的代码 MIT 许可不自动适用于 GPT 素材；使用素材时请核对原作者的最新说明。
 
 ## Electron

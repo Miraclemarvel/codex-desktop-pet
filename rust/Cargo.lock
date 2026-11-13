@@ -16,7 +16,7 @@ checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
 name = "codex-pet-rust"
-version = "0.5.0-preview.4"
+version = "0.5.0-preview.5"
 dependencies = [
  "image-webp",
  "miniz_oxide",

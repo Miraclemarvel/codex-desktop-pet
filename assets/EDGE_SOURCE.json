@@ -1,0 +1,33 @@
+{
+  "generator": "OpenAI built-in imagegen",
+  "date": "2026-11-13",
+  "upstreamOriginal": false,
+  "upstream": "https://github.com/hunmer/aboutme-pets/tree/main/pets/gpt",
+  "referenceIcon": "app-icon.png",
+  "referenceAnimation": "待机呼吸休闲",
+  "referenceFrame": 48,
+  "approvedOpenGeneration": "exec-761f8f6d-8c5f-4330-8dba-493c8f0014b9.png",
+  "blinkGeneration": "exec-fdcf1a9c-b9bc-4a5a-aa7c-ddd2f020e9da.png",
+  "prompt": "edge-peek-prompt.txt",
+  "notes": "AI-assisted derivative artwork. Original 92 animations unchanged. ChatGPT knot mark belongs to its rights holder. Blink composites only the eye region.",
+  "files": [
+    {
+      "source": "edge-peek.png",
+      "runtime": "edge-peek.webp",
+      "width": 1199,
+      "height": 1312,
+      "sourceSha256": "455c056ded8c20d029f6ed88f3a88cbc544581056e9a518007480c7c4350dc7a",
+      "runtimeSha256": "4f4d2dd8d4ce30dd93eaa5cc54dbaaa5a73f585601f4bf935bf4cd6768d1949e",
+      "rgbaPixelsPreserved": true
+    },
+    {
+      "source": "edge-peek-blink.png",
+      "runtime": "edge-peek-blink.webp",
+      "width": 1199,
+      "height": 1312,
+      "sourceSha256": "659cc2dbacb008078e030076fb78660a155b4f96858d67b31e91c573452493d7",
+      "runtimeSha256": "4d50d6ea545f31c7b916bf5bb19366f9d4e4bd11df427770ccdd9261116835a6",
+      "rgbaPixelsPreserved": true
+    }
+  ]
+}

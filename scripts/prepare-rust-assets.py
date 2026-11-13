@@ -26,7 +26,8 @@ for animation in animations:
 metadata = json.dumps({'animations': entries, 'source': provenance,
                       'rustLicenses': (root / 'outputs/rust-third-party-licenses.txt').read_text(encoding='utf-8'),
                       'upstreamReadme': (assets / 'UPSTREAM-README.md').read_text(encoding='utf-8'),
-                      'notices': (root / 'THIRD_PARTY_NOTICES.md').read_text(encoding='utf-8')},
+                      'notices': (root / 'THIRD_PARTY_NOTICES.md').read_text(encoding='utf-8'),
+                      'dockArtwork': json.loads((assets / 'EDGE_SOURCE.json').read_text(encoding='utf-8'))},
                      ensure_ascii=False, separators=(',', ':')).encode('utf-8')
 destination = root / 'outputs' / 'rust-assets.bin'
 destination.parent.mkdir(parents=True, exist_ok=True)
