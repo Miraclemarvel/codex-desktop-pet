@@ -32,7 +32,7 @@ use windows_sys::Win32::{
         Diagnostics::ToolHelp::*, LibraryLoader::*, Pipes::*, Registry::*, RemoteDesktop::*,
         Threading::*, Time::*,
     },
-    UI::{HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
+    UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -1602,13 +1602,9 @@ struct DockSwayPose {
     tail: f32,
 }
 impl DockSwayPose {
-    fn at(ms: u64, motion: &str) -> Self {
-        let strength = match motion {
-            "still" => return Self::default(),
-            "lively" => 1.05,
-            "normal" => 0.85,
-            _ => 0.65,
-        };
+    fn at(ms: u64, motion: &str, percent: u16) -> Self {
+        if motion == "still" { return Self::default(); }
+        let strength = 0.65 * percent.min(400) as f32 / 100.0;
         let t = (ms / 80 * 80) as f64;
         Self {
             wing: (t * std::f64::consts::TAU / 7800.0).sin() as f32 * strength,
@@ -1927,6 +1923,7 @@ struct Settings {
     motion: String,
     appearance: String,
     edge_docking: bool,
+    dock_sway_percent: u16,
     dock: Option<DockPlacement>,
 }
 impl Default for Settings {
@@ -1938,6 +1935,7 @@ impl Default for Settings {
             motion: "quiet".into(),
             appearance: "clear".into(),
             edge_docking: true,
+            dock_sway_percent: 200,
             dock: None,
         }
     }
@@ -1957,6 +1955,7 @@ impl Settings {
         if !["original", "clear", "vivid"].contains(&s.appearance.as_str()) {
             s.appearance = "clear".into();
         }
+        s.dock_sway_percent = s.dock_sway_percent.min(400);
         s
     }
     fn save(&self, profile: &Path) {
@@ -2537,10 +2536,115 @@ enum UiEvent {
     Wheel(i32),
     Dpi(u32),
     Escape,
+    Sway { percent: u16, commit: bool },
+    SwayClosed(HWND),
 }
 thread_local! {static EVENTS:RefCell<VecDeque<UiEvent>>=const{RefCell::new(VecDeque::new())};static HIT:RefCell<(i32,i32,Vec<u8>)>=const{RefCell::new((0,0,Vec::new()))};}
 fn queue(event: UiEvent) {
     EVENTS.with(|q| q.borrow_mut().push_back(event));
+}
+const SWAY_SLIDER: i32 = 5001;
+const SWAY_LABEL: i32 = 5002;
+const SWAY_RESET: usize = 5003;
+const SWAY_DONE: usize = 5004;
+unsafe fn sway_update(hwnd: HWND, percent: u16, commit: bool) {
+    SetWindowTextW(GetDlgItem(hwnd, SWAY_LABEL), wide(format!("摆幅：{percent}%")).as_ptr());
+    queue(UiEvent::Sway { percent, commit });
+}
+unsafe fn sway_close(hwnd: HWND) {
+    let slider = GetDlgItem(hwnd, SWAY_SLIDER);
+    let percent = SendMessageW(slider, TBM_GETPOS, 0, 0).clamp(0, 400) as u16;
+    sway_update(hwnd, percent, true);
+    DestroyWindow(hwnd);
+}
+unsafe extern "system" fn sway_wndproc(hwnd: HWND, message: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    match message {
+        WM_HSCROLL => {
+            if l as HWND == GetDlgItem(hwnd, SWAY_SLIDER) {
+                let percent = SendMessageW(l as HWND, TBM_GETPOS, 0, 0).clamp(0, 400) as u16;
+                sway_update(hwnd, percent, (w & 0xffff) != TB_THUMBTRACK as usize);
+            }
+            return 0;
+        }
+        WM_COMMAND => match w & 0xffff {
+            SWAY_RESET => {
+                SendMessageW(GetDlgItem(hwnd, SWAY_SLIDER), TBM_SETPOS, 1, 200);
+                sway_update(hwnd, 200, true);
+                return 0;
+            }
+            SWAY_DONE => { sway_close(hwnd); return 0; }
+            _ => {}
+        },
+        WM_CLOSE => { sway_close(hwnd); return 0; }
+        WM_NCDESTROY => {
+            let font = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as HFONT;
+            if !font.is_null() { DeleteObject(font); }
+            queue(UiEvent::SwayClosed(hwnd));
+        }
+        _ => {}
+    }
+    DefWindowProcW(hwnd, message, w, l)
+}
+fn sway_panel(owner: HWND, percent: u16, dpi: f64) -> Result<HWND, String> {
+    unsafe {
+        let controls = INITCOMMONCONTROLSEX { dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_BAR_CLASSES };
+        if InitCommonControlsEx(&controls) == 0 { return Err("Cannot initialize amplitude slider".into()); }
+        let class = wide("CodexPetRust.SwayPanel");
+        let instance = GetModuleHandleW(null());
+        let mut wc: WNDCLASSW = zeroed();
+        wc.lpfnWndProc = Some(sway_wndproc);
+        wc.hInstance = instance;
+        wc.hCursor = LoadCursorW(null_mut(), IDC_ARROW);
+        wc.hbrBackground = (COLOR_BTNFACE + 1) as HBRUSH;
+        wc.lpszClassName = class.as_ptr();
+        RegisterClassW(&wc);
+        let px = |value: i32| (value as f64 * dpi).round() as i32;
+        let style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+        let extended = WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+        let mut bounds = RECT { left: 0, top: 0, right: px(320), bottom: px(176) };
+        AdjustWindowRectExForDpi(&mut bounds, style, 0, extended, (96.0 * dpi) as u32);
+        let (w, h) = (bounds.right - bounds.left, bounds.bottom - bounds.top);
+        let pet = window_rect(owner);
+        let area = work_area(POINT { x: (pet.left + pet.right) / 2, y: (pet.top + pet.bottom) / 2 });
+        let x = if pet.left > (area.left + area.right) / 2 { pet.left - w - px(12) }
+            else { pet.right + px(12) };
+        let hwnd = CreateWindowExW(extended, class.as_ptr(), wide("翅膀与尾巴摆幅").as_ptr(), style,
+            x.clamp(area.left, (area.right - w).max(area.left)),
+            pet.top.clamp(area.top, (area.bottom - h).max(area.top)), w, h,
+            owner, null_mut(), instance, null());
+        if hwnd.is_null() { return Err("Cannot create amplitude settings".into()); }
+        let font = CreateFontW(-px(13), 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32,
+            OUT_OUTLINE_PRECIS as u32, CLIP_DEFAULT_PRECIS as u32, ANTIALIASED_QUALITY as u32,
+            DEFAULT_PITCH as u32, wide("Microsoft YaHei UI").as_ptr());
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, font as isize);
+        let child = |class: &str, text: &str, extra: u32, id: usize, x, y, w, h| {
+            let control = CreateWindowExW(0, wide(class).as_ptr(), wide(text).as_ptr(),
+                WS_CHILD | WS_VISIBLE | extra, px(x), px(y), px(w), px(h), hwnd,
+                id as HMENU, instance, null());
+            SendMessageW(control, WM_SETFONT, font as usize, 1);
+            control
+        };
+        child("STATIC", &format!("摆幅：{percent}%"), 0, SWAY_LABEL as usize, 16, 12, 288, 24);
+        child("STATIC", "仅调节吸附姿势，拖动即时预览", 0, 0, 16, 39, 288, 20);
+        let slider = child("msctls_trackbar32", "", WS_TABSTOP | TBS_AUTOTICKS | TBS_TOOLTIPS,
+            SWAY_SLIDER as usize, 12, 64, 296, 30);
+        SendMessageW(slider, TBM_SETRANGEMIN, 0, 0);
+        SendMessageW(slider, TBM_SETRANGEMAX, 1, 400);
+        SendMessageW(slider, TBM_SETTICFREQ, 100, 0);
+        SendMessageW(slider, TBM_SETLINESIZE, 0, 10);
+        SendMessageW(slider, TBM_SETPAGESIZE, 0, 50);
+        SendMessageW(slider, TBM_SETPOS, 1, percent as isize);
+        child("STATIC", "0% 关闭", 0, 0, 16, 98, 110, 20);
+        child("STATIC", "400%", SS_RIGHT, 0, 226, 98, 78, 20);
+        child("STATIC", "静态 / 暂停时停止", 0, 0, 16, 134, 144, 22);
+        child("BUTTON", "恢复默认", WS_TABSTOP, SWAY_RESET, 166, 130, 80, 28);
+        child("BUTTON", "完成", WS_TABSTOP, SWAY_DONE, 254, 130, 50, 28);
+        ShowWindow(hwnd, SW_SHOWNORMAL);
+        SetForegroundWindow(hwnd);
+        SetFocus(slider);
+        Ok(hwnd)
+    }
 }
 unsafe extern "system" fn wndproc(hwnd: HWND, message: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match message {
@@ -2686,6 +2790,7 @@ struct App {
     dock_sway_pose: DockSwayPose,
     dock_sway_started: Instant,
     dock_sway_updated: Instant,
+    sway_panel: HWND,
     dock_slide: Option<DockSlide>,
 }
 impl App {
@@ -2785,6 +2890,7 @@ impl App {
             dock_sway_pose: DockSwayPose::default(),
             dock_sway_started: Instant::now(),
             dock_sway_updated: Instant::now(),
+            sway_panel: null_mut(),
             dock_slide: None,
         };
         let area = work_area(POINT { x: 0, y: 0 });
@@ -3359,7 +3465,7 @@ impl App {
                     self.dock_sway_started = Instant::now();
                 }
                 let pose = DockSwayPose::at(self.dock_sway_started.elapsed().as_millis() as u64,
-                    &self.settings.motion);
+                    &self.settings.motion, self.settings.dock_sway_percent);
                 if pose != self.dock_sway_pose {
                     self.dock_sway_pose = pose;
                     self.dirty = true;
@@ -4000,6 +4106,7 @@ impl App {
                 );
             }
             AppendMenuW(menu, MF_POPUP, motion as usize, wide("待机动态").as_ptr());
+            item(menu, 13, &format!("翅膀与尾巴摆幅 · {}%…", self.settings.dock_sway_percent), false);
             let appearance = CreatePopupMenu();
             for (i, label) in ["原色", "清晰（默认）", "鲜明"].iter().enumerate() {
                 item(
@@ -4091,6 +4198,7 @@ impl App {
         9=>unsafe{DestroyWindow(self.hwnd);},10=>{signal(&self.profile,"StopWatcher");unsafe{DestroyWindow(self.hwnd);}},
         11=>{self.settings.edge_docking=!self.settings.edge_docking;if !self.settings.edge_docking{self.expand_from_dock(false);self.settings.dock=None;}self.settings.save(&self.profile);},
         12=>{self.start_expanding(false);},
+        13=>{if unsafe{IsWindow(self.sway_panel)}!=0{unsafe{SetForegroundWindow(self.sway_panel);}}else{match sway_panel(self.hwnd,self.settings.dock_sway_percent,self.dpi){Ok(hwnd)=>self.sway_panel=hwnd,Err(error)=>message_box(&error)}}},
         100..=103=>{self.settings.motion=["still","quiet","normal","lively"][id-100].into();self.idle=IdleSchedule::new(&self.settings.motion,now_ms());self.settings.save(&self.profile);if self.snapshot.state==State::Idle{self.hold_until=0;let index=self.choose(State::Idle);self.play(index);}},
         200..=202=>{self.settings.appearance=["original","clear","vivid"][id-200].into();self.settings.save(&self.profile);},
         300..=302=>{self.settings.scale=[0.8,1.0,1.2][id-300];self.settings.save(&self.profile);if let Some(side)=self.docked{let r=window_rect(self.hwnd);self.dock_to(side,POINT{x:(r.left+r.right)/2,y:r.top});}},
@@ -4100,6 +4208,19 @@ impl App {
     }
     fn event(&mut self, event: UiEvent) -> Result<(), String> {
         match event {
+            UiEvent::Sway { percent, commit } => {
+                self.settings.dock_sway_percent = percent.min(400);
+                if !self.paused {
+                    self.dock_sway_pose = DockSwayPose::at(
+                        self.dock_sway_started.elapsed().as_millis() as u64,
+                        &self.settings.motion, self.settings.dock_sway_percent);
+                }
+                if commit { self.settings.save(&self.profile); }
+                self.dirty = true;
+            }
+            UiEvent::SwayClosed(hwnd) => {
+                if self.sway_panel == hwnd { self.sway_panel = null_mut(); }
+            }
             UiEvent::Down(point) => {
                 let hiding = self.dock_slide.as_ref().is_some_and(|s|
                     matches!(s.phase, DockPhase::HideBody { .. } | DockPhase::HidePeek { .. }));
@@ -4281,6 +4402,16 @@ fn dock_smoke(app: &mut App, dir: &Path) -> Result<(), String> {
             return Err(format!("{tag}: static mode did not stop sway"));
         }
         app.settings.motion = motion;
+        let saved_percent = app.settings.dock_sway_percent;
+        for percent in [400, 0, saved_percent] {
+            app.event(UiEvent::Sway { percent, commit: true })?;
+            if Settings::load(&app.profile).dock_sway_percent != percent {
+                return Err(format!("{tag}: independent sway value was not saved"));
+            }
+            if percent == 0 && app.dock_sway_pose != DockSwayPose::default() {
+                return Err(format!("{tag}: zero amplitude did not stop sway"));
+            }
+        }
         app.dock_sway_pose = DockSwayPose::default();
         app.render()?;
         app.dock_eye_closed = true;
@@ -4359,6 +4490,7 @@ fn dock_smoke(app: &mut App, dir: &Path) -> Result<(), String> {
             "wingAndTailSway":true, "swayKeepsFaceHandsAndEdgeFixed":true,
             "swayDoesNotMoveWindow":true,
             "pauseAndStaticStopSway":true,
+            "independentSwaySettingSaved":true,
             "blinkChangedOnlyEye":true, "blinkChangedPixels":changed,
             "clickOpenedQuota":true, "verticalDragStayedDocked":true,
             "expandTransitionHadIntermediateFrames":true,
@@ -4401,6 +4533,9 @@ fn dock_smoke(app: &mut App, dir: &Path) -> Result<(), String> {
 }
 impl Drop for App {
     fn drop(&mut self) {
+        unsafe {
+            if IsWindow(self.sway_panel) != 0 { DestroyWindow(self.sway_panel); }
+        }
         self.stop.store(true, Ordering::Relaxed);
     }
 }
@@ -4475,6 +4610,7 @@ fn gui(args: &[String], profile: PathBuf) -> Result<(), String> {
         ShowWindow(hwnd, SW_HIDE);
     }
     let mut app = App::new(hwnd, profile, isolated, demo)?;
+    if ui_test && flag(args, "--sway-settings") { app.command(13); }
     let smoke = option(args, "--smoke").map(PathBuf::from);
     let dock_test = option(args, "--dock-smoke").map(PathBuf::from);
     let since = Instant::now();
@@ -4492,6 +4628,14 @@ fn gui(args: &[String], profile: PathBuf) -> Result<(), String> {
         }
         if got < 0 {
             return Err("Windows event loop failed".into());
+        }
+        if unsafe { IsWindow(app.sway_panel) } != 0 {
+            if message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE as usize
+                && (message.hwnd == app.sway_panel || unsafe { IsChild(app.sway_panel, message.hwnd) } != 0) {
+                unsafe { SendMessageW(app.sway_panel, WM_CLOSE, 0, 0); }
+                continue;
+            }
+            if unsafe { IsDialogMessageW(app.sway_panel, &mut message) } != 0 { continue; }
         }
         unsafe {
             TranslateMessage(&message);
@@ -4687,19 +4831,22 @@ fn main() {
 mod tests {
     use super::*;
     #[test]
-    fn dock_sway_is_small_continuous_asynchronous_and_respects_motion_setting() {
-        assert_eq!(DockSwayPose::at(0, "quiet"), DockSwayPose::default());
-        assert_eq!(DockSwayPose::at(4000, "still"), DockSwayPose::default());
-        let quiet = DockSwayPose::at(1000, "quiet");
-        let lively = DockSwayPose::at(1000, "lively");
-        assert!(quiet.wing.abs() < lively.wing.abs() && quiet.tail.abs() < lively.tail.abs());
+    fn dock_sway_is_continuous_and_has_an_independent_amplitude_control() {
+        assert_eq!(DockSwayPose::at(0, "quiet", 200), DockSwayPose::default());
+        assert_eq!(DockSwayPose::at(4000, "still", 400), DockSwayPose::default());
+        assert_eq!(DockSwayPose::at(4000, "quiet", 0), DockSwayPose::default());
+        let quiet = DockSwayPose::at(1000, "quiet", 100);
+        assert_eq!(quiet, DockSwayPose::at(1000, "lively", 100));
+        let strong = DockSwayPose::at(1000, "quiet", 300);
+        assert!((strong.wing - quiet.wing * 3.0).abs() < 0.00001);
+        assert!((strong.tail - quiet.tail * 3.0).abs() < 0.00001);
         assert!((quiet.wing - quiet.tail).abs() > 0.01);
         let mut previous = DockSwayPose::default();
         for ms in (0..40000).step_by(80) {
-            let pose = DockSwayPose::at(ms, "lively");
-            assert!(pose.wing.abs() <= 1.05 && pose.tail.abs() <= 1.05);
-            assert!((pose.wing - previous.wing).abs() < 0.09);
-            assert!((pose.tail - previous.tail).abs() < 0.09);
+            let pose = DockSwayPose::at(ms, "quiet", 400);
+            assert!(pose.wing.abs() <= 2.6 && pose.tail.abs() <= 2.6);
+            assert!((pose.wing - previous.wing).abs() < 0.18);
+            assert!((pose.tail - previous.tail).abs() < 0.18);
             previous = pose;
         }
     }
@@ -4717,7 +4864,7 @@ mod tests {
                 assert_eq!(base.pixels, still.pixels);
                 let mut moving = Canvas::new(w, h);
                 moving.dock_picture(frame, rect, "clear",
-                    DockSwayPose { wing: 0.65, tail: -0.65 }, side);
+                    DockSwayPose { wing: 2.6, tail: -2.6 }, side);
                 let mut wing = 0;
                 let mut tail = 0;
                 for i in 0..base.pixels.len() {
@@ -4885,6 +5032,7 @@ mod tests {
             "motion":"quiet", "appearance":"clear"
         })).unwrap();
         assert!(settings.edge_docking);
+        assert_eq!(settings.dock_sway_percent, 200);
         assert!(!settings.auto_start);
         assert_eq!(settings.position.as_ref().unwrap().x, 1395);
         settings.dock = Some(DockPlacement {
@@ -4894,6 +5042,23 @@ mod tests {
         assert_eq!(restored.dock.as_ref().unwrap().side, DockSide::Right);
         assert_eq!(restored.dock.as_ref().unwrap().anchor.x, -1);
         assert_eq!(restored.position.as_ref().unwrap().y, 305);
+    }
+    #[test]
+    fn independent_sway_setting_persists_and_clamps_without_changing_idle_motion() {
+        let profile = std::env::temp_dir().join(format!("codex-pet-sway-{}", uuid()));
+        fs::create_dir_all(&profile).unwrap();
+        fs::write(profile.join("settings.json"),
+            br#"{"scale":1.2,"autoStart":false,"motion":"quiet","dockSwayPercent":900}"#).unwrap();
+        let mut settings = Settings::load(&profile);
+        assert_eq!(settings.dock_sway_percent, 400);
+        assert_eq!(settings.scale, 1.2);
+        assert!(!settings.auto_start);
+        settings.dock_sway_percent = 75;
+        settings.save(&profile);
+        let restored = Settings::load(&profile);
+        assert_eq!(restored.dock_sway_percent, 75);
+        assert_eq!(restored.motion, "quiet");
+        fs::remove_dir_all(profile).unwrap();
     }
     #[test]
     fn cli_session_origins_exclude_desktop_and_unknown_vscode_clients() {
