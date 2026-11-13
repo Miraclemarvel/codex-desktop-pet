@@ -1686,6 +1686,16 @@ impl DockArt {
                 blink_left.pixels.extend_from_slice(&color);
             }
         }
+        // The hands protrude beyond the straight screen-edge cut in the source.
+        // Its alpha bounding box therefore leaves an 18 px strip beside the hair,
+        // wing and tail. Clip at that cut plus its 2 px antialiasing fringe before
+        // mirroring, so both sides touch the screen at every display scale.
+        let inset = 20;
+        let width = left.width - inset;
+        let pixels = left.pixels.chunks_exact(left.width * 4)
+            .flat_map(|row| row[inset * 4..].iter().copied()).collect();
+        let left = Frame { width, pixels, ..left };
+        let eye = BoxRect { x: eye.x - inset as i32, ..eye };
         Ok(Self { right: mirror(&left), blink_right: mirror(&blink_left), left, blink_left, eye })
     }
 }
@@ -4143,6 +4153,13 @@ fn dock_smoke(app: &mut App, dir: &Path) -> Result<(), String> {
             return Err(format!("{tag}: dock left the monitor work area"));
         }
         app.canvas.save_bmp(&dir.join(format!("{tag}-open.bmp")))?;
+        let edge_x = if side == DockSide::Left { 0 } else { app.canvas.w - 1 };
+        for fraction in [0.15, 0.25, 0.35, 0.65, 0.8, 0.95] {
+            let y = (fraction * app.canvas.h as f64) as i32;
+            if app.canvas.pixels[(y * app.canvas.w + edge_x) as usize] >> 24 < 240 {
+                return Err(format!("{tag}: artwork left a transparent seam at the edge"));
+            }
+        }
         let open = app.canvas.pixels.clone();
         app.dock_eye_closed = true;
         app.render()?;
@@ -4216,6 +4233,7 @@ fn dock_smoke(app: &mut App, dir: &Path) -> Result<(), String> {
         }
         cases.push(json!({
             "side":side, "stable":true, "boundedToWorkArea":true, "holdSamples":128,
+            "artworkTouchesScreenEdge":true,
             "blinkChangedOnlyEye":true, "blinkChangedPixels":changed,
             "clickOpenedQuota":true, "verticalDragStayedDocked":true,
             "expandTransitionHadIntermediateFrames":true,
@@ -4651,6 +4669,28 @@ mod tests {
         assert!(art.blink_left.height < art.left.height / 4);
         assert!(art.blink_left.pixels.chunks_exact(4).any(|p| p[3] == 0));
         assert!(art.blink_left.pixels.chunks_exact(4).any(|p| p[3] >= 250));
+    }
+    #[test]
+    fn dock_art_touches_both_edges_at_every_supported_scale_and_dpi() {
+        let art = DockArt::read().unwrap();
+        let area = RECT { left: 0, top: 0, right: 3840, bottom: 2160 };
+        for dpi in [1.0, 1.25, 1.5, 2.0] {
+            for scale in [0.8, 1.0, 1.2] {
+                for side in [DockSide::Left, DockSide::Right] {
+                    let frame = if side == DockSide::Left { &art.left } else { &art.right };
+                    let r = dock_layout(area, side, 100, dpi, scale,
+                        frame.width as f64 / frame.height as f64);
+                    let mut canvas = Canvas::new(r.w, r.h);
+                    canvas.picture(frame, BoxRect { x: 0, y: 0, w: r.w, h: r.h }, "clear");
+                    let x = if side == DockSide::Left { 0 } else { r.w - 1 };
+                    for fraction in [0.15, 0.25, 0.35, 0.65, 0.8, 0.95] {
+                        let y = (fraction * r.h as f64) as i32;
+                        assert!(canvas.pixels[(y * r.w + x) as usize] >> 24 >= 240,
+                            "{side:?} scale={scale} dpi={dpi} row={y}: transparent seam");
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn dock_palette_matches_silver_hair_without_desaturating_skin_or_iris() {
