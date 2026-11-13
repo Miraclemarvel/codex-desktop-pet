@@ -4,7 +4,7 @@
 
 程序图标取自白龙“元气挥手”动作第 48 帧的笑脸头像，保留透明背景，内嵌 16–256 像素的十种尺寸。来源和裁剪记录见 [assets/ICON_SOURCE.json](../assets/ICON_SOURCE.json)，图标不需要作为外部文件放在 EXE 旁边。
 
-当前预览版：**[v0.5.0-preview.7](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.5.0-preview.7)** · [下载 EXE](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.7/CodexPet-Rust-Windows-x64-v0.5.0-preview.7.exe) · [SHA-256 校验文件](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.7/CodexPet-Rust-Windows-x64-v0.5.0-preview.7.exe.sha256)
+当前预览版：**[v0.5.0-preview.8](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.5.0-preview.8)** · [下载 EXE](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.8/CodexPet-Rust-Windows-x64-v0.5.0-preview.8.exe) · [SHA-256 校验文件](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.8/CodexPet-Rust-Windows-x64-v0.5.0-preview.8.exe.sha256)
 
 ## 使用
 
@@ -36,6 +36,8 @@ Rust 版升级时，先在旧版右键选择“退出并关闭后台监听”，
 0.5.0-preview.6 修复左右吸附时的透明缝隙。探头按头发、翅膀和尾巴的实际切边对齐，消除素材手部突出造成的约 4 像素留白；原图、颜色及眨眼保持不变。测试覆盖三个大小、四种 DPI 下左右边缘的实际绘制像素。
 
 0.5.0-preview.7 为吸附姿势增加微动：翅膀约 7.8 秒起伏一轮，尾巴约 10.6 秒摇动一轮，默认大小下摆幅约 1 像素。使用原素材的局部柔性变形，头部、双手和贴边根部固定；单次透明采样保留颜色与边缘，窗口本身不移动。刷新约每秒 12.5 帧，静态模式和暂停停止摆动。
+
+0.5.0-preview.8 将翅膀和尾巴的摆幅提高约 60%，默认大小下约 1.5–2 像素，让微动更容易看见；继续使用原有慢节奏和固定根部，待机动态设置仍可调节幅度。
 
 ## 无损封装
 

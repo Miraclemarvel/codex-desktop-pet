@@ -1631,8 +1631,9 @@ impl DockSwayPose {
         let anchor = smooth(0.12, 0.70, u);
         let wing = smooth(0.59, 0.64, v) * (1.0 - smooth(0.76, 0.84, v));
         let tail = smooth(0.75, 0.82, v) * (1.0 - smooth(0.94, 1.0, v));
-        let dx = anchor * (wing * self.wing * 2.0 + tail * self.tail * 8.0);
-        let dy = anchor * (wing * self.wing * 7.0 + tail * self.tail * 3.0);
+        let amplitude = 1.6;
+        let dx = amplitude * anchor * (wing * self.wing * 2.0 + tail * self.tail * 8.0);
+        let dy = amplitude * anchor * (wing * self.wing * 7.0 + tail * self.tail * 3.0);
         let direction = if side == DockSide::Left { 1.0 } else { -1.0 };
         (x - dx * direction, y - dy)
     }
