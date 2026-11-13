@@ -30,7 +30,7 @@ use windows_sys::Win32::{
     Storage::FileSystem::*,
     System::{
         Diagnostics::ToolHelp::*, LibraryLoader::*, Pipes::*, Registry::*, RemoteDesktop::*,
-        SystemServices::{SS_RIGHT, TBM_GETPOS}, Threading::*, Time::*,
+        SystemServices::SS_RIGHT, Threading::*, Time::*,
     },
     UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
 };
@@ -2544,6 +2544,8 @@ fn queue(event: UiEvent) {
     EVENTS.with(|q| q.borrow_mut().push_back(event));
 }
 const SWAY_SLIDER: i32 = 5001;
+// CommCtrl.h defines this zero-offset message as WM_USER; windows-sys omits it.
+const TBM_GETPOS: u32 = WM_USER;
 const SWAY_LABEL: i32 = 5002;
 const SWAY_RESET: usize = 5003;
 const SWAY_DONE: usize = 5004;
