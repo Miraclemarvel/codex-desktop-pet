@@ -30,9 +30,9 @@ use windows_sys::Win32::{
     Storage::FileSystem::*,
     System::{
         Diagnostics::ToolHelp::*, LibraryLoader::*, Pipes::*, Registry::*, RemoteDesktop::*,
-        SystemServices::SS_RIGHT, Threading::*, Time::*,
+        Threading::*, Time::*,
     },
-    UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
+    UI::{Controls::WM_MOUSELEAVE, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -1603,9 +1603,10 @@ struct DockSwayPose {
     tail: f32,
 }
 impl DockSwayPose {
-    fn at(ms: u64, motion: &str, percent: u16) -> Self {
+    fn at(ms: u64, motion: &str, scale: f64) -> Self {
         if motion == "still" { return Self::default(); }
-        let strength = 0.65 * percent.min(400) as f32 / 100.0;
+        let scale = if scale.is_finite() { scale.clamp(0.0, 1.0) } else { 0.0 };
+        let strength = 2.6 * scale as f32;
         let t = (ms / 80 * 80) as f64;
         Self {
             wing: (t * std::f64::consts::TAU / 7800.0).sin() as f32 * strength,
@@ -1952,7 +1953,10 @@ struct Settings {
     motion: String,
     appearance: String,
     edge_docking: bool,
+    #[serde(default = "legacy_sway_default")]
     dock_sway_percent: u16,
+    #[serde(default)]
+    dock_sway_scale: Option<f64>,
     dock: Option<DockPlacement>,
 }
 impl Default for Settings {
@@ -1964,12 +1968,23 @@ impl Default for Settings {
             motion: "quiet".into(),
             appearance: "clear".into(),
             edge_docking: true,
-            dock_sway_percent: 200,
+            dock_sway_percent: 400,
+            dock_sway_scale: Some(1.0),
             dock: None,
         }
     }
 }
 impl Settings {
+    fn sway_scale(&self) -> f64 {
+        let value = self.dock_sway_scale.unwrap_or(self.dock_sway_percent.min(400) as f64 / 400.0);
+        if value.is_finite() { value.clamp(0.0, 1.0) } else { 1.0 }
+    }
+    fn sway_percent(&self) -> f64 { self.sway_scale() * 100.0 }
+    fn set_sway_percent(&mut self, value: f64) {
+        let percent = if value.is_finite() { value.clamp(0.0, 100.0) } else { 100.0 };
+        self.dock_sway_scale = Some(percent / 100.0);
+        self.dock_sway_percent = (percent * 4.0).round() as u16;
+    }
     fn load(profile: &Path) -> Self {
         let mut s: Self = fs::read(profile.join("settings.json"))
             .ok()
@@ -1985,12 +2000,14 @@ impl Settings {
             s.appearance = "clear".into();
         }
         s.dock_sway_percent = s.dock_sway_percent.min(400);
+        s.dock_sway_scale = Some(s.sway_scale());
         s
     }
     fn save(&self, profile: &Path) {
         let _ = write_json(&profile.join("settings.json"), self);
     }
 }
+fn legacy_sway_default() -> u16 { 200 }
 struct IdleSchedule {
     next: u64,
     gesture: bool,
@@ -2565,118 +2582,161 @@ enum UiEvent {
     Wheel(i32),
     Dpi(u32),
     Escape,
-    Sway { percent: u16, commit: bool },
+    Sway { percent: f64, commit: bool },
     SwayClosed(HWND),
 }
 thread_local! {static EVENTS:RefCell<VecDeque<UiEvent>>=const{RefCell::new(VecDeque::new())};static HIT:RefCell<(i32,i32,Vec<u8>)>=const{RefCell::new((0,0,Vec::new()))};}
 fn queue(event: UiEvent) {
     EVENTS.with(|q| q.borrow_mut().push_back(event));
 }
-const SWAY_SLIDER: i32 = 5001;
-// CommCtrl.h defines this zero-offset message as WM_USER; windows-sys omits it.
-const TBM_GETPOS: u32 = WM_USER;
-const SWAY_LABEL: i32 = 5002;
-const SWAY_RESET: usize = 5003;
-const SWAY_DONE: usize = 5004;
-unsafe fn sway_update(hwnd: HWND, percent: u16, commit: bool) {
-    SetWindowTextW(GetDlgItem(hwnd, SWAY_LABEL), wide(format!("摆幅：{percent}%")).as_ptr());
-    queue(UiEvent::Sway { percent, commit });
+fn sway_percent_label(percent: f64) -> String {
+    let text = format!("{percent:.2}");
+    format!("{}%", text.trim_end_matches('0').trim_end_matches('.'))
 }
-unsafe fn sway_close(hwnd: HWND) {
-    let slider = GetDlgItem(hwnd, SWAY_SLIDER);
-    let percent = SendMessageW(slider, TBM_GETPOS, 0, 0).clamp(0, 400) as u16;
-    sway_update(hwnd, percent, true);
+fn sway_percent_at(x: i32, start: i32, width: i32) -> f64 {
+    (((x-start) as f64 / width.max(1) as f64).clamp(0.0,1.0)*400.0).round()/4.0
+}
+struct SwayView {
+    dpi: f64, percent: f64, dragging: bool, hot: i32,
+    canvas: Canvas, surface: Surface, fonts: Fonts,
+}
+impl SwayView {
+    fn px(&self, v: f64) -> i32 { (v*self.dpi).round() as i32 }
+    fn rect(&self,x:f64,y:f64,w:f64,h:f64)->BoxRect {
+        BoxRect{x:self.px(x),y:self.px(y),w:self.px(w),h:self.px(h)}
+    }
+    fn label(&mut self, r:BoxRect, text:&str, size:f64, bold:bool, color:[u8;4], right:bool) {
+        let height=self.px(size);
+        self.canvas.text(&mut self.fonts,r,text,height,bold,color,right);
+    }
+    fn hit(&self,x:i32,y:i32)->i32 {
+        if self.rect(308.0,20.0,28.0,28.0).contains(x,y){return 1}
+        if self.rect(18.0,123.0,324.0,42.0).contains(x,y){return 2}
+        for i in 0..3 {if self.rect(28.0+i as f64*104.0,184.0,96.0,28.0).contains(x,y){return 3+i}}
+        if self.rect(162.0,232.0,88.0,30.0).contains(x,y){return 6}
+        if self.rect(258.0,232.0,74.0,30.0).contains(x,y){return 7}
+        0
+    }
+    fn update(&mut self,hwnd:HWND,percent:f64,commit:bool) {
+        self.percent=percent.clamp(0.0,100.0);
+        queue(UiEvent::Sway{percent:self.percent,commit});
+        let _=self.render(hwnd);
+    }
+    fn draw(&mut self) {
+        self.canvas.pixels.fill(0);
+        let dpi=self.dpi;
+        let px=|v:f64|(v*dpi).round() as i32;
+        let r=|x,y,w,h|BoxRect{x:px(x),y:px(y),w:px(w),h:px(h)};
+        for (spread,alpha) in [(7.0,5),(4.0,7),(1.0,10)] {
+            self.canvas.round_rect(r(8.0-spread,11.0-spread,344.0+spread*2.0,264.0+spread*2.0),px(22.0+spread),[26,70,54,alpha]);
+        }
+        self.canvas.round_rect(r(8.0,6.0,344.0,266.0),px(22.0),[210,230,219,255]);
+        self.canvas.round_rect(r(9.0,7.0,342.0,264.0),px(21.0),[251,255,252,255]);
+        self.label(r(28.0,21.0,254.0,24.0),"侧边动态",15.0,true,[44,78,64,255],false);
+        self.label(r(28.0,49.0,278.0,20.0),"让小翅膀和尾巴轻轻晃动",11.0,false,[126,149,138,255],false);
+        if self.hot==1 {self.canvas.round_rect(r(308.0,20.0,28.0,28.0),px(9.0),[234,244,237,255]);}
+        self.label(r(315.0,21.0,20.0,25.0),"×",18.0,false,[119,145,131,255],false);
+        self.label(r(28.0,81.0,184.0,22.0),"翅膀与尾巴摆幅",12.0,true,[73,107,89,255],false);
+        self.label(r(28.0,104.0,192.0,18.0),"拖动滑杆，实时预览",10.0,false,[143,161,150,255],false);
+        self.canvas.round_rect(r(246.0,77.0,86.0,40.0),px(13.0),[231,246,236,255]);
+        self.label(r(251.0,79.0,73.0,36.0),&sway_percent_label(self.percent),20.0,true,[51,118,85,255],true);
+        let length=(300.0*self.percent/100.0).round();
+        self.canvas.round_rect(r(30.0,138.0,300.0,6.0),px(3.0),[224,236,228,255]);
+        if length>0.0 {self.canvas.round_rect(r(30.0,138.0,length,6.0),px(3.0),[121,185,151,255]);}
+        let center=30.0+length;
+        self.canvas.round_rect(r(center-10.0,132.0,20.0,20.0),px(10.0),[193,219,202,180]);
+        self.canvas.round_rect(r(center-8.0,133.0,16.0,16.0),px(8.0),[255,255,255,255]);
+        self.canvas.round_rect(r(center-3.0,138.0,6.0,6.0),px(3.0),[105,169,135,255]);
+        self.label(r(28.0,157.0,62.0,18.0),"0%",10.0,false,[145,162,151,255],false);
+        self.label(r(151.0,157.0,52.0,18.0),"50%",10.0,false,[145,162,151,255],false);
+        self.label(r(274.0,157.0,58.0,18.0),"100%",10.0,false,[145,162,151,255],true);
+        for (i,(percent,label)) in [(25.0,"轻柔 25%"),(50.0,"适中 50%"),(100.0,"标准 100%")].iter().enumerate() {
+            let selected=(self.percent-percent).abs()<0.01;
+            let color=if selected{[221,242,228,255]}else if self.hot==i as i32+3{[233,245,237,255]}else{[240,247,242,255]};
+            let x=28.0+i as f64*104.0;
+            self.canvas.round_rect(r(x,184.0,96.0,28.0),px(9.0),color);
+            self.label(r(x+10.0,185.0,78.0,26.0),label,10.5,selected,[78,124,96,255],false);
+        }
+        self.canvas.round_rect(r(28.0,224.0,304.0,1.0),0,[227,238,230,255]);
+        self.label(r(28.0,236.0,132.0,24.0),"静态 / 暂停时停止",10.0,false,[149,166,154,255],false);
+        self.canvas.round_rect(r(162.0,232.0,88.0,30.0),px(10.0),if self.hot==6{[229,243,234,255]}else{[240,247,242,255]});
+        self.label(r(174.0,234.0,68.0,26.0),"恢复100%",11.0,false,[99,137,112,255],false);
+        self.canvas.round_rect(r(258.0,232.0,74.0,30.0),px(10.0),if self.hot==7{[65,127,94,255]}else{[80,146,109,255]});
+        self.label(r(282.0,234.0,32.0,26.0),"完成",11.0,true,[255,255,255,255],false);
+    }
+    fn render(&mut self,hwnd:HWND)->Result<(),String> {
+        self.draw();self.surface.pixels().copy_from_slice(&self.canvas.pixels);
+        let r=window_rect(hwnd);let point=POINT{x:r.left,y:r.top};
+        let size=SIZE{cx:self.canvas.w,cy:self.canvas.h};let origin=POINT{x:0,y:0};
+        let blend=BLENDFUNCTION{BlendOp:AC_SRC_OVER as u8,BlendFlags:0,SourceConstantAlpha:255,AlphaFormat:AC_SRC_ALPHA as u8};
+        unsafe {
+            SetWindowTextW(hwnd,wide(format!("侧边摆动设置 · {}",sway_percent_label(self.percent))).as_ptr());
+            if UpdateLayeredWindow(hwnd,null_mut(),&point,&size,self.surface.dc,&origin,0,&blend,ULW_ALPHA)==0{return Err("Cannot render sway panel".into())}
+        }
+        Ok(())
+    }
+}
+unsafe fn sway_close(hwnd:HWND) {
+    let data=GetWindowLongPtrW(hwnd,GWLP_USERDATA) as *mut SwayView;
+    if !data.is_null(){queue(UiEvent::Sway{percent:(*data).percent,commit:true});}
     DestroyWindow(hwnd);
 }
-unsafe extern "system" fn sway_wndproc(hwnd: HWND, message: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+unsafe extern "system" fn sway_wndproc(hwnd:HWND,message:u32,w:WPARAM,l:LPARAM)->LRESULT {
+    let data=GetWindowLongPtrW(hwnd,GWLP_USERDATA) as *mut SwayView;
+    if message==WM_CLOSE{sway_close(hwnd);return 0}
+    if message==WM_NCDESTROY {
+        SetWindowLongPtrW(hwnd,GWLP_USERDATA,0);
+        if !data.is_null(){drop(Box::from_raw(data));}
+        queue(UiEvent::SwayClosed(hwnd));return DefWindowProcW(hwnd,message,w,l)
+    }
+    if message==WM_ERASEBKGND{return 1}
+    if data.is_null(){return DefWindowProcW(hwnd,message,w,l)}
+    if message==WM_NCHITTEST {
+        let r=window_rect(hwnd);let x=(l as u16 as i16) as i32-r.left;let y=((l as usize>>16) as u16 as i16) as i32-r.top;
+        let v=&*data;
+        if x<0||y<0||x>=v.canvas.w||y>=v.canvas.h||v.canvas.pixels[(y*v.canvas.w+x) as usize]>>24<12{return HTTRANSPARENT as isize}
+        return if y<v.px(65.0)&&v.hit(x,y)!=1{HTCAPTION as isize}else{HTCLIENT as isize}
+    }
+    if message==WM_KEYDOWN&&(w==VK_ESCAPE as usize||w==VK_RETURN as usize){PostMessageW(hwnd,WM_CLOSE,0,0);return 0}
+    if !matches!(message,WM_LBUTTONDOWN|WM_LBUTTONUP|WM_MOUSEMOVE|WM_MOUSELEAVE|WM_CAPTURECHANGED|WM_KEYDOWN|WM_MOUSEWHEEL|WM_PAINT){return DefWindowProcW(hwnd,message,w,l)}
+    let v=&mut *data;let x=(l as u16 as i16) as i32;let y=((l as usize>>16) as u16 as i16) as i32;
     match message {
-        WM_HSCROLL => {
-            if l as HWND == GetDlgItem(hwnd, SWAY_SLIDER) {
-                let percent = SendMessageW(l as HWND, TBM_GETPOS, 0, 0).clamp(0, 400) as u16;
-                sway_update(hwnd, percent, (w & 0xffff) != TB_THUMBTRACK as usize);
-            }
-            return 0;
-        }
-        WM_COMMAND => match w & 0xffff {
-            SWAY_RESET => {
-                SendMessageW(GetDlgItem(hwnd, SWAY_SLIDER), TBM_SETPOS, 1, 200);
-                sway_update(hwnd, 200, true);
-                return 0;
-            }
-            SWAY_DONE => { sway_close(hwnd); return 0; }
-            _ => {}
+        WM_LBUTTONDOWN=>match v.hit(x,y){
+            1|7=>{PostMessageW(hwnd,WM_CLOSE,0,0);}
+            2=>{v.dragging=true;SetCapture(hwnd);v.update(hwnd,sway_percent_at(x,v.px(30.0),v.px(300.0)),false);}
+            3=>v.update(hwnd,25.0,true),4=>v.update(hwnd,50.0,true),5|6=>v.update(hwnd,100.0,true),_=>{}
         },
-        WM_CLOSE => { sway_close(hwnd); return 0; }
-        WM_NCDESTROY => {
-            let font = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as HFONT;
-            if !font.is_null() { DeleteObject(font); }
-            queue(UiEvent::SwayClosed(hwnd));
+        WM_MOUSEMOVE=>{
+            if v.dragging{v.update(hwnd,sway_percent_at(x,v.px(30.0),v.px(300.0)),false);}
+            else{let hot=v.hit(x,y);if hot!=v.hot{v.hot=hot;let _=v.render(hwnd);}let mut track=TRACKMOUSEEVENT{cbSize:size_of::<TRACKMOUSEEVENT>() as u32,dwFlags:TME_LEAVE,hwndTrack:hwnd,dwHoverTime:0};TrackMouseEvent(&mut track);}
         }
-        _ => {}
+        WM_LBUTTONUP|WM_CAPTURECHANGED=>{if v.dragging{v.dragging=false;queue(UiEvent::Sway{percent:v.percent,commit:true});if message==WM_LBUTTONUP{ReleaseCapture();}}}
+        WM_MOUSELEAVE=>{v.hot=0;let _=v.render(hwnd);}
+        WM_MOUSEWHEEL=>{let delta=((w>>16) as u16 as i16) as f64/120.0;v.update(hwnd,v.percent+delta*2.5,true);}
+        WM_KEYDOWN=>{let p=match w as u16{VK_LEFT|VK_DOWN=>v.percent-1.0,VK_RIGHT|VK_UP=>v.percent+1.0,VK_PRIOR=>v.percent+10.0,VK_NEXT=>v.percent-10.0,VK_HOME=>0.0,VK_END=>100.0,_=>v.percent};v.update(hwnd,p,true);}
+        WM_PAINT=>{ValidateRect(hwnd,null());let _=v.render(hwnd);}_=>{}
     }
-    DefWindowProcW(hwnd, message, w, l)
+    0
 }
-fn sway_panel(owner: HWND, percent: u16, dpi: f64) -> Result<HWND, String> {
+fn sway_panel(owner:HWND,percent:f64,dpi:f64)->Result<HWND,String> {
     unsafe {
-        let controls = INITCOMMONCONTROLSEX { dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32,
-            dwICC: ICC_BAR_CLASSES };
-        if InitCommonControlsEx(&controls) == 0 { return Err("Cannot initialize amplitude slider".into()); }
-        let class = wide("CodexPetRust.SwayPanel");
-        let instance = GetModuleHandleW(null());
-        let mut wc: WNDCLASSW = zeroed();
-        wc.lpfnWndProc = Some(sway_wndproc);
-        wc.hInstance = instance;
-        wc.hCursor = LoadCursorW(null_mut(), IDC_ARROW);
-        wc.hbrBackground = (COLOR_BTNFACE + 1) as HBRUSH;
-        wc.lpszClassName = class.as_ptr();
-        RegisterClassW(&wc);
-        let px = |value: i32| (value as f64 * dpi).round() as i32;
-        let style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
-        let extended = WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
-        let mut bounds = RECT { left: 0, top: 0, right: px(320), bottom: px(176) };
-        AdjustWindowRectExForDpi(&mut bounds, style, 0, extended, (96.0 * dpi) as u32);
-        let (w, h) = (bounds.right - bounds.left, bounds.bottom - bounds.top);
-        let pet = window_rect(owner);
-        let area = work_area(POINT { x: (pet.left + pet.right) / 2, y: (pet.top + pet.bottom) / 2 });
-        let x = if pet.left > (area.left + area.right) / 2 { pet.left - w - px(12) }
-            else { pet.right + px(12) };
-        let hwnd = CreateWindowExW(extended, class.as_ptr(), wide("翅膀与尾巴摆幅").as_ptr(), style,
-            x.clamp(area.left, (area.right - w).max(area.left)),
-            pet.top.clamp(area.top, (area.bottom - h).max(area.top)), w, h,
-            owner, null_mut(), instance, null());
-        if hwnd.is_null() { return Err("Cannot create amplitude settings".into()); }
-        let font = CreateFontW(-px(13), 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET as u32,
-            OUT_OUTLINE_PRECIS as u32, CLIP_DEFAULT_PRECIS as u32, ANTIALIASED_QUALITY as u32,
-            DEFAULT_PITCH as u32, wide("Microsoft YaHei UI").as_ptr());
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, font as isize);
-        let child = |class: &str, text: &str, extra: u32, id: usize, x, y, w, h| {
-            let control = CreateWindowExW(0, wide(class).as_ptr(), wide(text).as_ptr(),
-                WS_CHILD | WS_VISIBLE | extra, px(x), px(y), px(w), px(h), hwnd,
-                id as HMENU, instance, null());
-            SendMessageW(control, WM_SETFONT, font as usize, 1);
-            control
-        };
-        child("STATIC", &format!("摆幅：{percent}%"), 0, SWAY_LABEL as usize, 16, 12, 288, 24);
-        child("STATIC", "仅调节吸附姿势，拖动即时预览", 0, 0, 16, 39, 288, 20);
-        let slider = child("msctls_trackbar32", "", WS_TABSTOP | TBS_AUTOTICKS | TBS_TOOLTIPS,
-            SWAY_SLIDER as usize, 12, 64, 296, 30);
-        SendMessageW(slider, TBM_SETRANGEMIN, 0, 0);
-        SendMessageW(slider, TBM_SETRANGEMAX, 1, 400);
-        SendMessageW(slider, TBM_SETTICFREQ, 100, 0);
-        SendMessageW(slider, TBM_SETLINESIZE, 0, 10);
-        SendMessageW(slider, TBM_SETPAGESIZE, 0, 50);
-        SendMessageW(slider, TBM_SETPOS, 1, percent as isize);
-        child("STATIC", "0% 关闭", 0, 0, 16, 98, 110, 20);
-        child("STATIC", "400%", SS_RIGHT, 0, 226, 98, 78, 20);
-        child("STATIC", "静态 / 暂停时停止", 0, 0, 16, 134, 144, 22);
-        child("BUTTON", "恢复默认", WS_TABSTOP, SWAY_RESET, 166, 130, 80, 28);
-        child("BUTTON", "完成", WS_TABSTOP, SWAY_DONE, 254, 130, 50, 28);
-        ShowWindow(hwnd, SW_SHOWNORMAL);
-        SetForegroundWindow(hwnd);
-        SetFocus(slider);
-        Ok(hwnd)
+        let instance=GetModuleHandleW(null());let class=wide("CodexPetRust.SwayPanel");
+        let mut wc:WNDCLASSW=zeroed();wc.lpfnWndProc=Some(sway_wndproc);wc.hInstance=instance;wc.hCursor=LoadCursorW(null_mut(),IDC_ARROW);wc.lpszClassName=class.as_ptr();RegisterClassW(&wc);
+        let w=(360.0*dpi).round() as i32;let h=(284.0*dpi).round() as i32;
+        let pet=window_rect(owner);let area=work_area(POINT{x:(pet.left+pet.right)/2,y:(pet.top+pet.bottom)/2});let gap=(12.0*dpi).round() as i32;
+        let x=if pet.left>(area.left+area.right)/2{pet.left-w-gap}else{pet.right+gap};
+        let qa=GetWindowLongW(owner,GWL_EXSTYLE) as u32&WS_EX_APPWINDOW!=0;
+        let extended=WS_EX_LAYERED|WS_EX_TOPMOST|if qa{WS_EX_APPWINDOW}else{WS_EX_TOOLWINDOW};
+        let hwnd=CreateWindowExW(extended,class.as_ptr(),wide("侧边摆动设置").as_ptr(),WS_POPUP,x.clamp(area.left,(area.right-w).max(area.left)),pet.top.clamp(area.top,(area.bottom-h).max(area.top)),w,h,owner,null_mut(),instance,null());
+        if hwnd.is_null(){return Err("Cannot create sway panel".into())}
+        let surface=match Surface::new(w,h){Ok(s)=>s,Err(e)=>{DestroyWindow(hwnd);return Err(e)}};
+        let data=Box::into_raw(Box::new(SwayView{dpi,percent,dragging:false,hot:0,canvas:Canvas::new(w,h),surface,fonts:Fonts::default()}));
+        SetWindowLongPtrW(hwnd,GWLP_USERDATA,data as isize);
+        if let Err(e)=(*data).render(hwnd){DestroyWindow(hwnd);return Err(e)}
+        ShowWindow(hwnd,SW_SHOWNORMAL);SetForegroundWindow(hwnd);SetFocus(hwnd);Ok(hwnd)
     }
 }
+
 unsafe extern "system" fn wndproc(hwnd: HWND, message: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match message {
         WM_NCHITTEST => {
@@ -3496,7 +3556,7 @@ impl App {
                     self.dock_sway_started = Instant::now();
                 }
                 let pose = DockSwayPose::at(self.dock_sway_started.elapsed().as_millis() as u64,
-                    &self.settings.motion, self.settings.dock_sway_percent);
+                    &self.settings.motion, self.settings.sway_scale());
                 if pose != self.dock_sway_pose {
                     self.dock_sway_pose = pose;
                     self.dirty = true;
@@ -4137,7 +4197,7 @@ impl App {
                 );
             }
             AppendMenuW(menu, MF_POPUP, motion as usize, wide("待机动态").as_ptr());
-            item(menu, 13, &format!("翅膀与尾巴摆幅 · {}%…", self.settings.dock_sway_percent), false);
+            item(menu, 13, &format!("翅膀与尾巴摆幅 · {}…", sway_percent_label(self.settings.sway_percent())), false);
             let appearance = CreatePopupMenu();
             for (i, label) in ["原色", "清晰（默认）", "鲜明"].iter().enumerate() {
                 item(
@@ -4229,7 +4289,7 @@ impl App {
         9=>unsafe{DestroyWindow(self.hwnd);},10=>{signal(&self.profile,"StopWatcher");unsafe{DestroyWindow(self.hwnd);}},
         11=>{self.settings.edge_docking=!self.settings.edge_docking;if !self.settings.edge_docking{self.expand_from_dock(false);self.settings.dock=None;}self.settings.save(&self.profile);},
         12=>{self.start_expanding(false);},
-        13=>{if unsafe{IsWindow(self.sway_panel)}!=0{unsafe{SetForegroundWindow(self.sway_panel);}}else{match sway_panel(self.hwnd,self.settings.dock_sway_percent,self.dpi){Ok(hwnd)=>self.sway_panel=hwnd,Err(error)=>message_box(&error)}}},
+        13=>{if unsafe{IsWindow(self.sway_panel)}!=0{unsafe{SetForegroundWindow(self.sway_panel);}}else{match sway_panel(self.hwnd,self.settings.sway_percent(),self.dpi){Ok(hwnd)=>self.sway_panel=hwnd,Err(error)=>message_box(&error)}}},
         100..=103=>{self.settings.motion=["still","quiet","normal","lively"][id-100].into();self.idle=IdleSchedule::new(&self.settings.motion,now_ms());self.settings.save(&self.profile);if self.snapshot.state==State::Idle{self.hold_until=0;let index=self.choose(State::Idle);self.play(index);}},
         200..=202=>{self.settings.appearance=["original","clear","vivid"][id-200].into();self.settings.save(&self.profile);},
         300..=302=>{self.settings.scale=[0.8,1.0,1.2][id-300];self.settings.save(&self.profile);if let Some(side)=self.docked{let r=window_rect(self.hwnd);self.dock_to(side,POINT{x:(r.left+r.right)/2,y:r.top});}},
@@ -4240,11 +4300,11 @@ impl App {
     fn event(&mut self, event: UiEvent) -> Result<(), String> {
         match event {
             UiEvent::Sway { percent, commit } => {
-                self.settings.dock_sway_percent = percent.min(400);
+                self.settings.set_sway_percent(percent);
                 if !self.paused {
                     self.dock_sway_pose = DockSwayPose::at(
                         self.dock_sway_started.elapsed().as_millis() as u64,
-                        &self.settings.motion, self.settings.dock_sway_percent);
+                        &self.settings.motion, self.settings.sway_scale());
                 }
                 if commit { self.settings.save(&self.profile); }
                 self.dirty = true;
@@ -4433,13 +4493,13 @@ fn dock_smoke(app: &mut App, dir: &Path) -> Result<(), String> {
             return Err(format!("{tag}: static mode did not stop sway"));
         }
         app.settings.motion = motion;
-        let saved_percent = app.settings.dock_sway_percent;
-        for percent in [400, 0, saved_percent] {
+        let saved_percent = app.settings.sway_percent();
+        for percent in [100.0, 0.0, saved_percent] {
             app.event(UiEvent::Sway { percent, commit: true })?;
-            if Settings::load(&app.profile).dock_sway_percent != percent {
+            if (Settings::load(&app.profile).sway_percent() - percent).abs() > 0.000001 {
                 return Err(format!("{tag}: independent sway value was not saved"));
             }
-            if percent == 0 && app.dock_sway_pose != DockSwayPose::default() {
+            if percent == 0.0 && app.dock_sway_pose != DockSwayPose::default() {
                 return Err(format!("{tag}: zero amplitude did not stop sway"));
             }
         }
@@ -4666,7 +4726,6 @@ fn gui(args: &[String], profile: PathBuf) -> Result<(), String> {
                 unsafe { SendMessageW(app.sway_panel, WM_CLOSE, 0, 0); }
                 continue;
             }
-            if unsafe { IsDialogMessageW(app.sway_panel, &mut message) } != 0 { continue; }
         }
         unsafe {
             TranslateMessage(&message);
@@ -4863,18 +4922,18 @@ mod tests {
     use super::*;
     #[test]
     fn dock_sway_is_continuous_and_has_an_independent_amplitude_control() {
-        assert_eq!(DockSwayPose::at(0, "quiet", 200), DockSwayPose::default());
-        assert_eq!(DockSwayPose::at(4000, "still", 400), DockSwayPose::default());
-        assert_eq!(DockSwayPose::at(4000, "quiet", 0), DockSwayPose::default());
-        let quiet = DockSwayPose::at(1000, "quiet", 100);
-        assert_eq!(quiet, DockSwayPose::at(1000, "lively", 100));
-        let strong = DockSwayPose::at(1000, "quiet", 300);
+        assert_eq!(DockSwayPose::at(0, "quiet", 1.0), DockSwayPose::default());
+        assert_eq!(DockSwayPose::at(4000, "still", 1.0), DockSwayPose::default());
+        assert_eq!(DockSwayPose::at(4000, "quiet", 0.0), DockSwayPose::default());
+        let quiet = DockSwayPose::at(1000, "quiet", 0.25);
+        assert_eq!(quiet, DockSwayPose::at(1000, "lively", 0.25));
+        let strong = DockSwayPose::at(1000, "quiet", 0.75);
         assert!((strong.wing - quiet.wing * 3.0).abs() < 0.00001);
         assert!((strong.tail - quiet.tail * 3.0).abs() < 0.00001);
         assert!((quiet.wing - quiet.tail).abs() > 0.01);
         let mut previous = DockSwayPose::default();
         for ms in (0..40000).step_by(80) {
-            let pose = DockSwayPose::at(ms, "quiet", 400);
+            let pose = DockSwayPose::at(ms, "quiet", 1.0);
             assert!(pose.wing.abs() <= 2.6 && pose.tail.abs() <= 2.6);
             assert!((pose.wing - previous.wing).abs() < 0.18);
             assert!((pose.tail - previous.tail).abs() < 0.18);
@@ -5064,6 +5123,7 @@ mod tests {
         })).unwrap();
         assert!(settings.edge_docking);
         assert_eq!(settings.dock_sway_percent, 200);
+        assert_eq!(settings.sway_percent(), 50.0);
         assert!(!settings.auto_start);
         assert_eq!(settings.position.as_ref().unwrap().x, 1395);
         settings.dock = Some(DockPlacement {
@@ -5082,14 +5142,44 @@ mod tests {
             br#"{"scale":1.2,"autoStart":false,"motion":"quiet","dockSwayPercent":900}"#).unwrap();
         let mut settings = Settings::load(&profile);
         assert_eq!(settings.dock_sway_percent, 400);
+        assert_eq!(settings.sway_percent(), 100.0);
         assert_eq!(settings.scale, 1.2);
         assert!(!settings.auto_start);
-        settings.dock_sway_percent = 75;
+        settings.set_sway_percent(18.75);
         settings.save(&profile);
         let restored = Settings::load(&profile);
         assert_eq!(restored.dock_sway_percent, 75);
+        assert_eq!(restored.sway_percent(), 18.75);
         assert_eq!(restored.motion, "quiet");
         fs::remove_dir_all(profile).unwrap();
+    }
+    #[test]
+    fn new_sway_reference_preserves_legacy_amplitude_without_repeated_migration() {
+        for old in [0, 75, 200, 400] {
+            let legacy: Settings = serde_json::from_value(json!({"dockSwayPercent":old})).unwrap();
+            assert_eq!(legacy.sway_percent(), old as f64 / 4.0);
+            let mut migrated = legacy.clone();
+            migrated.set_sway_percent(legacy.sway_percent());
+            let again: Settings = serde_json::from_value(serde_json::to_value(&migrated).unwrap()).unwrap();
+            assert_eq!(again.sway_percent(), legacy.sway_percent());
+            for ms in [0, 80, 1000, 4000, 7800] {
+                let pose = DockSwayPose::at(ms, "quiet", again.sway_scale());
+                let t = (ms / 80 * 80) as f64;
+                let old_strength = 0.65 * old as f32 / 100.0;
+                assert!((pose.wing - (t*std::f64::consts::TAU/7800.0).sin() as f32*old_strength).abs()<0.000001);
+                assert!((pose.tail - (t*std::f64::consts::TAU/10600.0).sin() as f32*old_strength).abs()<0.000001);
+            }
+        }
+        assert_eq!(Settings::default().sway_percent(), 100.0);
+    }
+    #[test]
+    fn new_slider_coordinates_and_labels_have_exact_endpoints() {
+        assert_eq!(sway_percent_at(-100,30,300),0.0);
+        assert_eq!(sway_percent_at(180,30,300),50.0);
+        assert_eq!(sway_percent_at(999,30,300),100.0);
+        assert_eq!(sway_percent_label(100.0),"100%");
+        assert_eq!(sway_percent_label(18.75),"18.75%");
+        assert_eq!(sway_percent_label(0.0),"0%");
     }
     #[test]
     fn cli_session_origins_exclude_desktop_and_unknown_vscode_clients() {
