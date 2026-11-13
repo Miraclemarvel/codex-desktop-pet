@@ -30,7 +30,7 @@ use windows_sys::Win32::{
     Storage::FileSystem::*,
     System::{
         Diagnostics::ToolHelp::*, LibraryLoader::*, Pipes::*, Registry::*, RemoteDesktop::*,
-        Threading::*, Time::*,
+        SystemServices::{SS_RIGHT, TBM_GETPOS}, Threading::*, Time::*,
     },
     UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
 };
