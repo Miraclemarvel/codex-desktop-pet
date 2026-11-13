@@ -1596,6 +1596,47 @@ struct DockArt {
     blink_right: Frame,
     eye: BoxRect,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct DockSwayPose {
+    wing: f32,
+    tail: f32,
+}
+impl DockSwayPose {
+    fn at(ms: u64, motion: &str) -> Self {
+        let strength = match motion {
+            "still" => return Self::default(),
+            "lively" => 1.05,
+            "normal" => 0.85,
+            _ => 0.65,
+        };
+        let t = (ms / 80 * 80) as f64;
+        Self {
+            wing: (t * std::f64::consts::TAU / 7800.0).sin() as f32 * strength,
+            tail: (t * std::f64::consts::TAU / 10600.0).sin() as f32 * strength,
+        }
+    }
+    fn source(self, x: f32, y: f32, w: f32, h: f32, side: DockSide) -> (f32, f32) {
+        if self == Self::default() {
+            return (x, y);
+        }
+        fn smooth(a: f32, b: f32, value: f32) -> f32 {
+            let t = ((value - a) / (b - a)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        }
+        let u = x / (w - 1.0).max(1.0);
+        let u = if side == DockSide::Left { u } else { 1.0 - u };
+        let v = y / (h - 1.0).max(1.0);
+        // Pin the screen-edge roots. Smooth, overlapping envelopes move only
+        // the lower wing and tail; the face, ornament and hands stay exact.
+        let anchor = smooth(0.12, 0.70, u);
+        let wing = smooth(0.59, 0.64, v) * (1.0 - smooth(0.76, 0.84, v));
+        let tail = smooth(0.75, 0.82, v) * (1.0 - smooth(0.94, 1.0, v));
+        let dx = anchor * (wing * self.wing * 2.0 + tail * self.tail * 8.0);
+        let dy = anchor * (wing * self.wing * 7.0 + tail * self.tail * 3.0);
+        let direction = if side == DockSide::Left { 1.0 } else { -1.0 };
+        (x - dx * direction, y - dy)
+    }
+}
 fn dock_color(mut rgba: [u8; 4]) -> [u8; 4] {
     let (r, g, b) = (rgba[0] as f64, rgba[1] as f64, rgba[2] as f64);
     let chroma = r.max(g).max(b) - r.min(g).min(b);
@@ -2252,7 +2293,19 @@ impl Canvas {
         };
         self.sprite(frame, target, &sheet, appearance);
     }
+    fn dock_picture(&mut self, frame: &Frame, target: BoxRect, appearance: &str,
+        pose: DockSwayPose, side: DockSide) {
+        let sheet = Sheet {
+            frame_width: frame.width, frame_height: frame.height,
+            columns: 1, rows: 1, frame_count: 1, fps: 1,
+        };
+        self.sprite_warp(frame, target, &sheet, appearance, Some((pose, side)));
+    }
     fn sprite(&mut self, frame: &Frame, target: BoxRect, sheet: &Sheet, appearance: &str) {
+        self.sprite_warp(frame, target, sheet, appearance, None);
+    }
+    fn sprite_warp(&mut self, frame: &Frame, target: BoxRect, sheet: &Sheet, appearance: &str,
+        warp: Option<(DockSwayPose, DockSide)>) {
         if frame.width == 0 || frame.height == 0 {
             return;
         }
@@ -2271,6 +2324,8 @@ impl Canvas {
             for x in left.max(0)..right.min(self.w) {
                 let fx = ((x - target.x) as f32 + 0.5) / sx - 0.5 - frame.x as f32;
                 let fy = ((y - target.y) as f32 + 0.5) / sy - 0.5 - frame.y as f32;
+                let (fx, fy) = warp.map_or((fx, fy), |(pose, side)|
+                    pose.source(fx, fy, frame.width as f32, frame.height as f32, side));
                 let ix = fx.floor() as i32;
                 let iy = fy.floor() as i32;
                 let tx = fx - ix as f32;
@@ -2627,6 +2682,9 @@ struct App {
     dock_art: DockArt,
     dock_blink: DockBlink,
     dock_eye_closed: bool,
+    dock_sway_pose: DockSwayPose,
+    dock_sway_started: Instant,
+    dock_sway_updated: Instant,
     dock_slide: Option<DockSlide>,
 }
 impl App {
@@ -2723,6 +2781,9 @@ impl App {
             dock_art: DockArt::read()?,
             dock_blink: DockBlink::new(now_ms()),
             dock_eye_closed: false,
+            dock_sway_pose: DockSwayPose::default(),
+            dock_sway_started: Instant::now(),
+            dock_sway_updated: Instant::now(),
             dock_slide: None,
         };
         let area = work_area(POINT { x: 0, y: 0 });
@@ -2845,6 +2906,9 @@ impl App {
         self.hold_until = 0;
         self.dock_eye_closed = false;
         self.dock_blink = DockBlink::new(now_ms());
+        self.dock_sway_pose = DockSwayPose::default();
+        self.dock_sway_started = Instant::now();
+        self.dock_sway_updated = self.dock_sway_started;
         self.move_to(POINT { x: target.x, y: target.y });
         self.save_position();
         self.dirty = true;
@@ -3202,6 +3266,11 @@ impl App {
         }
     }
     fn tick(&mut self) -> Result<(), String> {
+        let sway_now = Instant::now();
+        if self.paused || self.press.is_some() {
+            self.dock_sway_started += sway_now.duration_since(self.dock_sway_updated);
+        }
+        self.dock_sway_updated = sway_now;
         while let Ok(notice) = self.notices.try_recv() {
             match notice {
                 Notice::Atlas(sequence, index, result) => {
@@ -3284,6 +3353,17 @@ impl App {
             return Ok(());
         }
         if self.docked.is_some() {
+            if !self.paused && self.press.is_none() {
+                if self.settings.motion == "still" {
+                    self.dock_sway_started = Instant::now();
+                }
+                let pose = DockSwayPose::at(self.dock_sway_started.elapsed().as_millis() as u64,
+                    &self.settings.motion);
+                if pose != self.dock_sway_pose {
+                    self.dock_sway_pose = pose;
+                    self.dirty = true;
+                }
+            }
             let closed = self.dock_blink.closed(
                 now_ms(), !self.paused && self.settings.motion != "still",
             );
@@ -3473,7 +3553,8 @@ impl App {
         self.canvas.clip = None;
         self.panel_box = BoxRect { x: 0, y: 0, w: 0, h: 0 };
         let frame = if side == DockSide::Left { &self.dock_art.left } else { &self.dock_art.right };
-        self.canvas.picture(frame, BoxRect { x: 0, y: 0, w: self.canvas.w, h: self.canvas.h }, &self.settings.appearance);
+        self.canvas.dock_picture(frame, BoxRect { x: 0, y: 0, w: self.canvas.w, h: self.canvas.h },
+            &self.settings.appearance, self.dock_sway_pose, side);
         if self.dock_eye_closed {
             let mut eye = self.dock_art.eye;
             if side == DockSide::Right {
@@ -4161,6 +4242,46 @@ fn dock_smoke(app: &mut App, dir: &Path) -> Result<(), String> {
             }
         }
         let open = app.canvas.pixels.clone();
+        let writes_before_sway = app.position_writes;
+        app.dock_sway_pose = DockSwayPose { wing: 0.65, tail: -0.65 };
+        app.render()?;
+        app.canvas.save_bmp(&dir.join(format!("{tag}-sway.bmp")))?;
+        let mut wing_changes = 0;
+        let mut tail_changes = 0;
+        for (i, pixel) in app.canvas.pixels.iter().enumerate() {
+            if *pixel != open[i] {
+                let x = i as i32 % app.canvas.w;
+                let y = i as i32 / app.canvas.w;
+                let edge = if side == DockSide::Left { x < 3 } else { x >= app.canvas.w - 3 };
+                if (y as f64) < app.canvas.h as f64 * 0.58 || edge {
+                    return Err(format!("{tag}: sway moved the face, hands or screen-edge roots"));
+                }
+                if (y as f64) < app.canvas.h as f64 * 0.75 { wing_changes += 1; }
+                if (y as f64) > app.canvas.h as f64 * 0.85 { tail_changes += 1; }
+            }
+        }
+        let sway_bounds = window_rect(app.hwnd);
+        if wing_changes == 0 || tail_changes == 0 || app.position_writes != writes_before_sway
+            || (r.left, r.top, r.right, r.bottom) !=
+                (sway_bounds.left, sway_bounds.top, sway_bounds.right, sway_bounds.bottom) {
+            return Err(format!("{tag}: sway was missing or moved the window"));
+        }
+        let frozen = app.dock_sway_pose;
+        app.paused = true;
+        app.tick()?;
+        if app.dock_sway_pose != frozen {
+            return Err(format!("{tag}: pause did not freeze sway"));
+        }
+        app.paused = false;
+        let motion = app.settings.motion.clone();
+        app.settings.motion = "still".into();
+        app.tick()?;
+        if app.dock_sway_pose != DockSwayPose::default() {
+            return Err(format!("{tag}: static mode did not stop sway"));
+        }
+        app.settings.motion = motion;
+        app.dock_sway_pose = DockSwayPose::default();
+        app.render()?;
         app.dock_eye_closed = true;
         app.render()?;
         app.canvas.save_bmp(&dir.join(format!("{tag}-blink.bmp")))?;
@@ -4234,6 +4355,9 @@ fn dock_smoke(app: &mut App, dir: &Path) -> Result<(), String> {
         cases.push(json!({
             "side":side, "stable":true, "boundedToWorkArea":true, "holdSamples":128,
             "artworkTouchesScreenEdge":true,
+            "wingAndTailSway":true, "swayKeepsFaceHandsAndEdgeFixed":true,
+            "swayDoesNotMoveWindow":true,
+            "pauseAndStaticStopSway":true,
             "blinkChangedOnlyEye":true, "blinkChangedPixels":changed,
             "clickOpenedQuota":true, "verticalDragStayedDocked":true,
             "expandTransitionHadIntermediateFrames":true,
@@ -4561,6 +4685,55 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dock_sway_is_small_continuous_asynchronous_and_respects_motion_setting() {
+        assert_eq!(DockSwayPose::at(0, "quiet"), DockSwayPose::default());
+        assert_eq!(DockSwayPose::at(4000, "still"), DockSwayPose::default());
+        let quiet = DockSwayPose::at(1000, "quiet");
+        let lively = DockSwayPose::at(1000, "lively");
+        assert!(quiet.wing.abs() < lively.wing.abs() && quiet.tail.abs() < lively.tail.abs());
+        assert!((quiet.wing - quiet.tail).abs() > 0.01);
+        let mut previous = DockSwayPose::default();
+        for ms in (0..40000).step_by(80) {
+            let pose = DockSwayPose::at(ms, "lively");
+            assert!(pose.wing.abs() <= 1.05 && pose.tail.abs() <= 1.05);
+            assert!((pose.wing - previous.wing).abs() < 0.09);
+            assert!((pose.tail - previous.tail).abs() < 0.09);
+            previous = pose;
+        }
+    }
+    #[test]
+    fn dock_sway_changes_wing_and_tail_but_pins_face_hands_and_both_screen_edges() {
+        let art = DockArt::read().unwrap();
+        for (w, h) in [(74, 190), (92, 238), (148, 380)] {
+            for side in [DockSide::Left, DockSide::Right] {
+                let frame = if side == DockSide::Left { &art.left } else { &art.right };
+                let rect = BoxRect { x: 0, y: 0, w, h };
+                let mut base = Canvas::new(w, h);
+                base.picture(frame, rect, "clear");
+                let mut still = Canvas::new(w, h);
+                still.dock_picture(frame, rect, "clear", DockSwayPose::default(), side);
+                assert_eq!(base.pixels, still.pixels);
+                let mut moving = Canvas::new(w, h);
+                moving.dock_picture(frame, rect, "clear",
+                    DockSwayPose { wing: 0.65, tail: -0.65 }, side);
+                let mut wing = 0;
+                let mut tail = 0;
+                for i in 0..base.pixels.len() {
+                    let x = i as i32 % w;
+                    let y = i as i32 / w;
+                    if (y as f64) < h as f64 * 0.58
+                        || if side == DockSide::Left { x < 3 } else { x >= w - 3 } {
+                        assert_eq!(base.pixels[i], moving.pixels[i], "{side:?} at {x},{y}");
+                    } else if base.pixels[i] != moving.pixels[i] {
+                        if (y as f64) < h as f64 * 0.75 { wing += 1; }
+                        if (y as f64) > h as f64 * 0.85 { tail += 1; }
+                    }
+                }
+                assert!(wing > 0 && tail > 0, "{side:?}: wing={wing}, tail={tail}");
+            }
+        }
+    }
     #[test]
     fn dock_slide_easing_has_endpoints_and_monotonic_intermediate_frames() {
         for reveal in [false, true] {
