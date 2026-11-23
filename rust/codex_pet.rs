@@ -550,24 +550,39 @@ fn is_cli_session(meta: &Value) -> bool {
         _ => false,
     }
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SessionSource {
+    Cli,
+    Desktop,
+}
+impl SessionSource {
+    fn accepts(self, meta: &Value) -> bool {
+        match self {
+            Self::Cli => is_cli_session(meta),
+            Self::Desktop => meta["originator"] == "Codex Desktop" && meta["source"] == "vscode",
+        }
+    }
+}
 #[derive(Default)]
-struct CliTail {
+struct SessionTail {
     offset: u64,
     initialized: bool,
-    cli: bool,
+    matches_source: bool,
     dropping: bool,
     status: Value,
 }
-struct CliLogs {
+struct SessionLogs {
+    source: SessionSource,
     root: PathBuf,
     since: u64,
-    files: HashMap<PathBuf, CliTail>,
+    files: HashMap<PathBuf, SessionTail>,
     usage: Option<Usage>,
     complete_until: u64,
 }
-impl CliLogs {
-    fn new(root: PathBuf, since: u64) -> Self {
+impl SessionLogs {
+    fn new(root: PathBuf, since: u64, source: SessionSource) -> Self {
         Self {
+            source,
             root,
             since,
             files: HashMap::new(),
@@ -575,8 +590,8 @@ impl CliLogs {
             complete_until: 0,
         }
     }
-    fn consume(&mut self, tail: &mut CliTail, record: &Value, live: bool) {
-        if !tail.cli || record["type"] != "event_msg" {
+    fn consume(&mut self, tail: &mut SessionTail, record: &Value, live: bool) {
+        if !tail.matches_source || record["type"] != "event_msg" {
             return;
         }
         let Some(at) = record["timestamp"].as_str().and_then(rollout_time) else {
@@ -586,7 +601,8 @@ impl CliLogs {
             return;
         }
         let p = &record["payload"];
-        if p["type"] == "token_count"
+        if self.source == SessionSource::Cli
+            && p["type"] == "token_count"
             && p["rate_limits"].is_object()
             && self.usage.as_ref().is_none_or(|u| at >= u.fetched_at)
         {
@@ -598,6 +614,14 @@ impl CliLogs {
             | "exec_command_begin"
             | "patch_apply_begin"
             | "mcp_tool_call_begin" => "active",
+            // The bounded initial read can start in the middle of a long turn.
+            // Only infer activity from in-turn work, and never revive a terminal state.
+            "item_started" | "item_completed"
+                if self.source == SessionSource::Desktop
+                    && tail.status.is_null()
+                    && p["turn_id"].is_string()
+                    && matches!(p["item"]["type"].as_str(),
+                        Some("Reasoning" | "CommandExecution" | "McpToolCall")) => "active",
             "task_complete" | "turn_complete" => {
                 if live && matches!(classify(&tail.status, 0), State::Working | State::Waiting) {
                     self.complete_until = now_ms() + 10000;
@@ -613,28 +637,29 @@ impl CliLogs {
         };
         tail.status = json!(next);
     }
-    fn read(&mut self, path: &Path, tail: &mut CliTail) -> std::io::Result<()> {
+    fn read(&mut self, path: &Path, tail: &mut SessionTail) -> std::io::Result<()> {
         let mut file = File::open(path)?;
         let size = file.metadata()?.len();
         if size < tail.offset {
-            *tail = CliTail::default();
+            *tail = SessionTail::default();
         }
         let live = tail.initialized;
         if !tail.initialized {
             let mut header = Vec::new();
-            (&mut file).take(CLI_READ_LIMIT).read_to_end(&mut header)?;
-            let Some(end) = header.iter().position(|b| *b == b'\n') else {
+            BufReader::new((&mut file).take(CLI_READ_LIMIT)).read_until(b'\n', &mut header)?;
+            if header.last() != Some(&b'\n') {
+                return Ok(());
+            }
+            let Ok(meta) = serde_json::from_slice::<Value>(&header) else {
                 return Ok(());
             };
-            let Ok(meta) = serde_json::from_slice::<Value>(&header[..end]) else {
-                return Ok(());
-            };
-            tail.cli = meta["type"] == "session_meta" && is_cli_session(&meta["payload"]);
+            tail.matches_source = meta["type"] == "session_meta" && self.source.accepts(&meta["payload"]);
             tail.initialized = true;
-            tail.offset = (end as u64 + 1).max(size.saturating_sub(CLI_READ_LIMIT));
-            tail.dropping = tail.offset > end as u64 + 1;
+            let header_end = header.len() as u64;
+            tail.offset = header_end.max(size.saturating_sub(CLI_READ_LIMIT));
+            tail.dropping = tail.offset > header_end;
         }
-        if !tail.cli {
+        if !tail.matches_source {
             tail.offset = size;
             return Ok(());
         }
@@ -688,6 +713,11 @@ impl CliLogs {
         }
         let mut entries = Vec::new();
         walk(&self.root, 0, &mut entries);
+        if self.source == SessionSource::Desktop {
+            entries.retain(|(at, _)| {
+                at.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() >= self.since as u128
+            });
+        }
         entries.sort_by(|a, b| b.0.cmp(&a.0));
         entries.truncate(50);
         let seen: HashSet<_> = entries.iter().map(|(_, p)| p.clone()).collect();
@@ -706,10 +736,10 @@ impl CliLogs {
                 self.files.insert(path, tail);
             }
         }
-        let threads = self
+        let threads: HashMap<_, _> = self
             .files
             .iter()
-            .filter(|(_, t)| t.cli)
+            .filter(|(_, t)| t.matches_source)
             .map(|(p, t)| {
                 (
                     p.to_string_lossy().into_owned(),
@@ -718,12 +748,13 @@ impl CliLogs {
                         requests: Vec::new(),
                         revision: 0,
                         id: String::new(),
-                        host: "cli".into(),
+                        host: "local".into(),
                     },
                 )
             })
             .collect();
-        aggregate(&threads, self.complete_until, true)
+        let connected = self.source == SessionSource::Cli || !threads.is_empty();
+        aggregate(&threads, self.complete_until, connected)
     }
     fn usage(&self) -> Result<Usage, String> {
         self.usage.clone().ok_or_else(|| {
@@ -860,6 +891,7 @@ struct Desktop {
 }
 impl Desktop {
     fn connect() -> Result<Self, String> {
+        let mut stream = Pipe::open("codex-ipc", 64 * 1024 * 1024)?;
         let name = fs::read_dir(r"\\.\pipe\")
             .map_err(|e| e.to_string())?
             .filter_map(Result::ok)
@@ -867,7 +899,6 @@ impl Desktop {
             .find(|n| n.starts_with("codex-app-tools-"))
             .ok_or("请先打开 Codex")?;
         let tools = Pipe::open(&name, 8 * 1024 * 1024)?;
-        let mut stream = Pipe::open("codex-ipc", 64 * 1024 * 1024)?;
         stream.send(&json!({"type":"request","requestId":uuid(),"sourceClientId":"initializing-client","version":0,"method":"initialize","params":{"clientType":"desktop-pet-rust"}}))?;
         Ok(Self {
             tools,
@@ -1069,6 +1100,92 @@ impl Drop for Desktop {
         }
     }
 }
+
+// The optional desktop event stream is absent in some releases. Follow local
+// desktop turn events in that case and use the bundled app-server for quota.
+struct DesktopMonitor {
+    bridge: Option<Desktop>,
+    sessions: SessionLogs,
+    executable: Option<PathBuf>,
+    retry_bridge: Instant,
+}
+impl DesktopMonitor {
+    fn new(args: &[String]) -> Self {
+        let owner = match option(args, "--codex-pid") {
+            Some(pid) => pid.parse().ok().and_then(process_handle),
+            None => find_desktop().map(|(_, handle)| handle),
+        };
+        let since = owner.as_ref().map_or_else(now_ms, process_since);
+        let executable = owner.as_ref().and_then(process_image_path)
+            .and_then(|path| bundled_desktop_cli(&path))
+            .or_else(|| option(args, "--codex-exe").map(PathBuf::from))
+            .or_else(|| std::env::var_os("CODEX_CLI_PATH").map(PathBuf::from));
+        Self {
+            bridge: None,
+            sessions: SessionLogs::new(codex_home().join("sessions"), since, SessionSource::Desktop),
+            executable,
+            retry_bridge: Instant::now(),
+        }
+    }
+    fn defer_bridge(&mut self) {
+        self.bridge = None;
+        self.retry_bridge = Instant::now() + Duration::from_secs(30);
+    }
+    fn poll(&mut self) -> Snapshot {
+        if self.bridge.is_none() && Instant::now() >= self.retry_bridge {
+            self.bridge = Desktop::connect().ok();
+            if self.bridge.is_none() {
+                self.defer_bridge();
+            }
+        }
+        if let Some(bridge) = self.bridge.as_mut() {
+            if bridge.list().is_ok() {
+                return aggregate(&bridge.threads, bridge.complete_until, true);
+            }
+            self.defer_bridge();
+        }
+        self.sessions.poll()
+    }
+    fn updates(&mut self) -> Option<Snapshot> {
+        let bridge = self.bridge.as_mut()?;
+        match bridge.read_stream() {
+            Ok(changed) => {
+                let expired = bridge.complete_until != 0 && bridge.complete_until <= now_ms();
+                if expired {
+                    bridge.complete_until = 0;
+                }
+                (changed || expired).then(|| aggregate(&bridge.threads, bridge.complete_until, true))
+            }
+            Err(_) => {
+                self.defer_bridge();
+                Some(self.sessions.poll())
+            }
+        }
+    }
+    fn usage(&mut self) -> Result<Usage, String> {
+        if let Some(bridge) = self.bridge.as_mut() {
+            if let Ok(raw) = bridge.call("get_usage_limits", json!({})) {
+                return Ok(normalize_usage(&raw));
+            }
+        }
+        let exe = self.executable.as_ref().ok_or("未找到当前 Codex 的额度查询程序")?;
+        read_cli_usage(exe)
+    }
+}
+
+fn bundled_desktop_cli(image: &Path) -> Option<PathBuf> {
+    let filename = image.file_name()?.to_str()?;
+    if !filename.eq_ignore_ascii_case("ChatGPT.exe") && !filename.eq_ignore_ascii_case("Codex.exe") {
+        return None;
+    }
+    let app = image.parent()?;
+    let package = app.parent()?.file_name()?.to_str()?;
+    if !package.to_ascii_lowercase().starts_with("openai.codex_") {
+        return None;
+    }
+    let exe = app.join("resources").join("codex.exe");
+    exe.is_file().then_some(exe)
+}
 enum BridgeCommand {
     Usage,
     Reconnect,
@@ -1086,7 +1203,7 @@ fn start_bridge(tx: Sender<Notice>, stop: Arc<AtomicBool>) -> Sender<BridgeComma
             let since = option(&args, "--codex-since")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or_else(now_ms);
-            let mut logs = CliLogs::new(codex_home().join("sessions"), since);
+            let mut logs = SessionLogs::new(codex_home().join("sessions"), since, SessionSource::Cli);
             let mut next = Instant::now();
             while !stop.load(Ordering::Relaxed) {
                 let mut usage = false;
@@ -1094,7 +1211,7 @@ fn start_bridge(tx: Sender<Notice>, stop: Arc<AtomicBool>) -> Sender<BridgeComma
                     match command {
                         BridgeCommand::Usage => usage = true,
                         BridgeCommand::Reconnect => {
-                            logs = CliLogs::new(codex_home().join("sessions"), now_ms());
+                            logs = SessionLogs::new(codex_home().join("sessions"), now_ms(), SessionSource::Cli);
                             next = Instant::now();
                         }
                     }
@@ -1110,57 +1227,28 @@ fn start_bridge(tx: Sender<Notice>, stop: Arc<AtomicBool>) -> Sender<BridgeComma
             }
             return;
         }
-        let mut desktop: Option<Desktop> = None;
+        let mut monitor = DesktopMonitor::new(&args);
         let mut next_poll = Instant::now();
-        let mut want_usage = false;
-        let mut complete = false;
         while !stop.load(Ordering::Relaxed) {
+            let mut want_usage = false;
             while let Ok(command) = rx.try_recv() {
                 match command {
                     BridgeCommand::Usage => want_usage = true,
                     BridgeCommand::Reconnect => {
-                        desktop = None;
+                        monitor = DesktopMonitor::new(&args);
                         next_poll = Instant::now();
                     }
                 }
             }
-            let result = (|| -> Result<(), String> {
-                if Instant::now() >= next_poll {
-                    next_poll = Instant::now() + Duration::from_millis(3500);
-                    if desktop.is_none() {
-                        desktop = Some(Desktop::connect()?);
-                    }
-                    let d = desktop.as_mut().unwrap();
-                    d.list()?;
-                    let state = aggregate(&d.threads, d.complete_until, true);
-                    complete = state.state == State::Complete;
-                    let _ = tx.send(Notice::State(state));
-                }
-                if let Some(d) = desktop.as_mut() {
-                    if d.read_stream()? || (complete && d.complete_until <= now_ms()) {
-                        let state = aggregate(&d.threads, d.complete_until, true);
-                        complete = state.state == State::Complete;
-                        let _ = tx.send(Notice::State(state));
-                    }
-                }
-                if want_usage {
-                    want_usage = false;
-                    let result = desktop
-                        .as_mut()
-                        .ok_or("请先打开 Codex".to_string())
-                        .and_then(|d| d.call("get_usage_limits", json!({})))
-                        .map(|v| normalize_usage(&v));
-                    let _ = tx.send(Notice::Usage(result));
-                }
-                Ok(())
-            })();
-            if result.is_err() {
-                desktop = None;
-                let _ = tx.send(Notice::State(Snapshot::default()));
-                if want_usage {
-                    want_usage = false;
-                    let _ = tx.send(Notice::Usage(Err("Codex 连接暂不可用".into())));
-                }
+            if Instant::now() >= next_poll {
+                let _ = tx.send(Notice::State(monitor.poll()));
+                next_poll = Instant::now() + Duration::from_millis(3500);
+            }
+            if let Some(state) = monitor.updates() {
+                let _ = tx.send(Notice::State(state));
+            }
+            if want_usage {
+                let _ = tx.send(Notice::Usage(monitor.usage()));
             }
             thread::sleep(Duration::from_millis(25));
         }
@@ -1246,6 +1334,14 @@ fn process_handle(pid: u32) -> Option<Handle> {
         Some(handle)
     }
 }
+fn process_image_path(handle: &Handle) -> Option<PathBuf> {
+    let mut path = vec![0u16; 32768];
+    let mut size = path.len() as u32;
+    if unsafe { QueryFullProcessImageNameW(handle.0, 0, path.as_mut_ptr(), &mut size) } == 0 {
+        return None;
+    }
+    Some(PathBuf::from(String::from_utf16_lossy(&path[..size as usize])))
+}
 fn alive(handle: &Handle) -> bool {
     unsafe { WaitForSingleObject(handle.0, 0) == WAIT_TIMEOUT }
 }
@@ -1281,15 +1377,8 @@ fn find_desktop() -> Option<(u32, Handle)> {
             }
             if session == session_id() {
                 if let Some(handle) = process_handle(entry.th32ProcessID) {
-                    let mut path = [0u16; 32768];
-                    let mut size = path.len() as u32;
-                    if unsafe {
-                        QueryFullProcessImageNameW(handle.0, 0, path.as_mut_ptr(), &mut size)
-                    } != 0
-                        && String::from_utf16_lossy(&path[..size as usize])
-                            .to_lowercase()
-                            .contains(r"\openai.codex_")
-                    {
+                    if process_image_path(&handle).is_some_and(|path|
+                        path.to_string_lossy().to_ascii_lowercase().contains(r"\openai.codex_")) {
                         let mut pair = (entry.th32ProcessID, false);
                         unsafe {
                             EnumWindows(Some(has_window), &mut pair as *mut _ as isize);
@@ -1530,15 +1619,8 @@ fn watcher(args: &[String], profile: &Path) -> Result<(), String> {
                         .arg("--cli")
                         .arg("--codex-since")
                         .arg(process_since(handle).to_string());
-                    let mut path = [0u16; 32768];
-                    let mut size = path.len() as u32;
-                    if unsafe {
-                        QueryFullProcessImageNameW(handle.0, 0, path.as_mut_ptr(), &mut size)
-                    } != 0
-                    {
-                        command
-                            .arg("--codex-exe")
-                            .arg(String::from_utf16_lossy(&path[..size as usize]));
+                    if let Some(path) = process_image_path(handle) {
+                        command.arg("--codex-exe").arg(path);
                     }
                 }
                 if flag(args, "--demo") {
@@ -2843,6 +2925,7 @@ struct App {
     profile: PathBuf,
     isolated: bool,
     demo: bool,
+    has_owner: bool,
     pack: Arc<Pack>,
     settings: Settings,
     dpi: f64,
@@ -2885,7 +2968,7 @@ struct App {
     dock_slide: Option<DockSlide>,
 }
 impl App {
-    fn new(hwnd: HWND, profile: PathBuf, isolated: bool, demo: bool) -> Result<Self, String> {
+    fn new(hwnd: HWND, profile: PathBuf, isolated: bool, demo: bool, has_owner: bool) -> Result<Self, String> {
         let pack = Arc::new(Pack::read()?);
         let settings = Settings::load(&profile);
         let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96) as f64 / 96.0;
@@ -2925,6 +3008,7 @@ impl App {
             profile,
             isolated,
             demo,
+            has_owner,
             pack,
             settings: settings.clone(),
             dpi,
@@ -3657,7 +3741,7 @@ impl App {
             }
         }
         let label = if !self.snapshot.connected {
-            "等待 Codex".to_string()
+            if self.has_owner { "等待状态同步" } else { "等待 Codex" }.to_string()
         } else {
             match self.snapshot.state {
                 State::Working => {
@@ -3826,7 +3910,9 @@ impl App {
                 GetLastError()
             }));
         }
-        if self.snapshot.connected || self.demo {
+        // An owned pet exits with its host. A temporarily unavailable status feed
+        // should only affect its badge, not the lifetime of its visible window.
+        if self.has_owner || self.snapshot.connected || self.demo {
             unsafe {
                 ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
             }
@@ -4700,7 +4786,7 @@ fn gui(args: &[String], profile: PathBuf) -> Result<(), String> {
     unsafe {
         ShowWindow(hwnd, SW_HIDE);
     }
-    let mut app = App::new(hwnd, profile, isolated, demo)?;
+    let mut app = App::new(hwnd, profile, isolated, demo, owner.is_some())?;
     if ui_test && flag(args, "--sway-settings") { app.command(13); }
     let smoke = option(args, "--smoke").map(PathBuf::from);
     let dock_test = option(args, "--dock-smoke").map(PathBuf::from);
@@ -4839,7 +4925,7 @@ fn run() -> Result<(), String> {
             let since = option(&args, "--codex-since")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or_else(now_ms);
-            let mut logs = CliLogs::new(codex_home().join("sessions"), since);
+            let mut logs = SessionLogs::new(codex_home().join("sessions"), since, SessionSource::Cli);
             let state = logs.poll();
             let usage = read_cli_usage(&cli_executable(&args));
             write_json(
@@ -4848,24 +4934,21 @@ fn run() -> Result<(), String> {
             )?;
             return usage.map(|_| ());
         }
-        let result = (|| -> Result<Value, String> {
-            let mut d = Desktop::connect()?;
-            d.list()?;
-            for _ in 0..40 {
-                let _ = d.read_stream()?;
-                thread::sleep(Duration::from_millis(25));
-            }
-            let usage = normalize_usage(&d.call("get_usage_limits", json!({}))?);
-            Ok(
-                json!({"connected":true,"state":aggregate(&d.threads,d.complete_until,true),"usage":usage,"animationCount":Pack::read()?.animations.len()}),
-            )
-        })();
-        let report = match &result {
-            Ok(v) => v.clone(),
-            Err(e) => json!({"connected":false,"error":e}),
-        };
+        let mut monitor = DesktopMonitor::new(&args);
+        let mut state = monitor.poll();
+        for _ in 0..40 {
+            if monitor.bridge.is_none() { break; }
+            if let Some(update) = monitor.updates() { state = update; }
+            thread::sleep(Duration::from_millis(25));
+        }
+        let source = if monitor.bridge.is_some() { "desktop-bridge" } else { "desktop-session-events" };
+        let usage = monitor.usage();
+        let report = json!({"connected":state.connected,"source":source,"state":state,
+            "usage":usage.as_ref().ok(),"usageError":usage.as_ref().err(),
+            "animationCount":Pack::read()?.animations.len()});
         write_json(Path::new(&file), &report)?;
-        return result.map(|_| ());
+        if !state.connected { return Err("桌面任务状态暂不可用".into()); }
+        return usage.map(|_| ());
     }
     if flag(&args, "--quit") {
         signal(&profile, "QuitPet");
@@ -5197,13 +5280,54 @@ mod tests {
                     format!("{header}\n{event}\n"),
                 )
                 .unwrap();
-                let mut logs = CliLogs::new(root.clone(), 0);
+                let mut logs = SessionLogs::new(root.clone(), 0, SessionSource::Cli);
                 assert_eq!(
                     logs.poll().working,
                     usize::from(case["expected"] == true),
                     "{metadata}"
                 );
             }
+        });
+        fs::remove_dir_all(&root).unwrap();
+        result.unwrap();
+    }
+    #[test]
+    fn desktop_session_fallback_follows_only_desktop_turns_and_recovers_mid_turn() {
+        let root = std::env::temp_dir().join(format!("codex-pet-desktop-events-{}", uuid()));
+        fs::create_dir_all(&root).unwrap();
+        let result = std::panic::catch_unwind(|| {
+            let mut logs = SessionLogs::new(root.clone(), 0, SessionSource::Desktop);
+            assert!(!logs.poll().connected);
+            let header = |origin: &str, source: Value| {
+                json!({"type":"session_meta","payload":{"originator":origin,"source":source}})
+            };
+            let event = |payload: Value| {
+                json!({"timestamp":"2026-11-23T08:00:00Z","type":"event_msg","payload":payload})
+            };
+            let start = event(json!({"type":"task_started"}));
+            for (name, meta) in [
+                ("cli", header("codex_exec", json!("exec"))),
+                ("ide", header("other", json!("vscode"))),
+                ("child", header("Codex Desktop", json!({"subagent":{"thread_spawn":{}}}))),
+            ] {
+                fs::write(root.join(format!("rollout-{name}.jsonl")), format!("{meta}\n{start}\n")).unwrap();
+            }
+            assert!(!logs.poll().connected);
+            let file = root.join("rollout-desktop.jsonl");
+            let meta = header("Codex Desktop", json!("vscode"));
+            let work = event(json!({"type":"item_completed","turn_id":"t","item":{"type":"CommandExecution"}}));
+            // The turn start is before the bounded tail the observer initially reads.
+            let skipped = " ".repeat(CLI_READ_LIMIT as usize + 128);
+            fs::write(&file, format!("{meta}\n{start}\n{skipped}\n{work}\n")).unwrap();
+            let snapshot = logs.poll();
+            assert!(snapshot.connected);
+            assert_eq!(snapshot.working, 1);
+            let mut writer = OpenOptions::new().append(true).open(&file).unwrap();
+            writeln!(writer, "{}", event(json!({"type":"task_complete"}))).unwrap();
+            writeln!(writer, "{work}").unwrap();
+            assert_eq!(logs.poll().state, State::Complete);
+            writeln!(writer, "{start}").unwrap();
+            assert_eq!(logs.poll().working, 1);
         });
         fs::remove_dir_all(&root).unwrap();
         result.unwrap();
@@ -5230,10 +5354,10 @@ mod tests {
         let since = rollout_time("2026-11-12T00:00:00Z").unwrap();
         assert_eq!(rollout_time("2026-11-12T00:00:01.123Z"), Some(since + 1123));
         assert_eq!(rollout_time("bad"), None);
-        let mut logs = CliLogs::new(PathBuf::new(), since);
-        let mut tail = CliTail {
-            cli: true,
-            ..CliTail::default()
+        let mut logs = SessionLogs::new(PathBuf::new(), since, SessionSource::Cli);
+        let mut tail = SessionTail {
+            matches_source: true,
+            ..SessionTail::default()
         };
         let event = |kind| json!({"timestamp":"2026-11-12T00:00:01.123Z","type":"event_msg","payload":{"type":kind,"last_agent_message":"private"}});
         logs.consume(&mut tail, &event("task_started"), true);
@@ -5269,7 +5393,7 @@ mod tests {
                 b"{\"type\":\"session_meta\",\"payload\":{\"source\":\"cli\"}}\n",
             )
             .unwrap();
-            let mut logs = CliLogs::new(root.clone(), 0);
+            let mut logs = SessionLogs::new(root.clone(), 0, SessionSource::Cli);
             assert_eq!(logs.poll().state, State::Idle);
             let line="{\"type\":\"event_msg\",\"timestamp\":\"2026-11-12T00:00:01Z\",\"payload\":{\"type\":\"task_started\"}}\n";
             let mut writer = OpenOptions::new().append(true).open(&file).unwrap();

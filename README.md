@@ -4,7 +4,7 @@
 
 Windows 上陪伴 Codex 工作的透明桌宠，支持任务状态同步、剩余额度查看和 92 个角色动作。
 
-**Rust 单 EXE 预览版：[v0.5.0-preview.10](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.5.0-preview.10)** · **Electron 稳定版：[v0.4.1](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.4.1)**
+**Rust 单 EXE 预览版：[v0.5.0-preview.11](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.5.0-preview.11)** · **Electron 稳定版：[v0.4.1](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.4.1)**
 
 **角色与动画素材来自 [hunmer/aboutme-pets 的 GPT 动作包](https://github.com/hunmer/aboutme-pets/tree/main/pets/gpt)，由 hunmer 生成。感谢原作者提供素材！本项目负责桌宠程序与 Codex 接入。**
 
@@ -12,10 +12,10 @@ Windows 上陪伴 Codex 工作的透明桌宠，支持任务状态同步、剩�
 
 ## 下载与使用
 
-- **[下载 Rust 单 EXE（Windows x64，约 131 MiB）](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.10/CodexPet-Rust-Windows-x64-v0.5.0-preview.10.exe)**：放在固定文件夹后双击运行。全部动画内嵌，无需 Electron、Node.js、WebView 或额外资源文件。详见 [Rust 版使用与编译说明](docs/rust.md)。
+- **[下载 Rust 单 EXE（Windows x64，约 131 MiB）](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.11/CodexPet-Rust-Windows-x64-v0.5.0-preview.11.exe)**：放在固定文件夹后双击运行。全部动画内嵌，无需 Electron、Node.js、WebView 或额外资源文件。详见 [Rust 版使用与编译说明](docs/rust.md)。
 - **[下载 Electron 稳定版安装包](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.4.1)**：解压后双击 `安装并启动.cmd`。无需安装 Node.js；请保留解压后的文件夹位置。
 
-两种版本均不需要管理员权限。从 Electron 切换到 Rust 时，先关闭旧版的“随 Codex 启停”并退出。Rust 版升级时，先在旧版右键选择“退出并关闭后台监听”，再运行新版 EXE。
+两种版本均不需要管理员权限。从 Electron 切换到 Rust 时，先关闭旧版的“随 Codex 启停”并退出。Rust 版升级时，先在旧版右键选择“退出并关闭后台监听”，再运行新版 EXE。旧桌宠窗口已经隐藏时，也可在终端给旧 EXE 传入 `--stop`，等后台进程退出后再启动新版。
 
 - Codex Desktop 或 Windows 原生 Codex CLI 打开时自动出现，跟随的进程退出后自动结束；最小化 Codex 时继续陪伴。不显示托盘图标，也不占任务栏。
 - 点击角色或状态条查看账号剩余额度、重置时间；卡片打开时每分钟刷新，也可手动刷新。Rust 版卡片左下角以小字显示可用重置次数。
@@ -34,11 +34,11 @@ Rust 版额度卡片（演示数据）：
 
 ## 状态与额度接入
 
-**Desktop 模式**通过当前 Windows 用户的 Codex 桌面本地管道读取真实任务状态与账号额度，仅允许调用 `list_threads` 和 `get_usage_limits` 两种只读工具，无需额外模型调用。额度显示账号共享的剩余百分比与重置时间，不估算剩余消息数；没有返回的数据会标记不可用，刷新失败时标记缓存。
+**Desktop 模式**在 Codex 提供桌面事件管道时，通过本地管道读取真实任务状态与账号额度，仅允许调用 `list_threads` 和 `get_usage_limits` 两种只读工具，无需额外模型调用。额度显示账号共享的剩余百分比与重置时间，不估算剩余消息数；没有返回的数据会标记不可用，刷新失败时标记缓存。
 
-后台每 3.5 秒查询最近 50 个聊天及置顶聊天，并订阅活跃聊天状态。程序仅保留状态判断所需字段，丢弃收到的对话正文与工具参数，不上传到外部服务器。
+使用桌面管道时，后台每 3.5 秒查询最近 50 个聊天及置顶聊天，并订阅活跃聊天状态。程序仅保留状态判断所需字段，丢弃收到的对话正文与工具参数，不上传到外部服务器。
 
-当前适配在 Codex Windows **26.1106.6628.0** 上验证，使用桌面应用内部管道协议，Codex 更新后可能需要调整。远程任务状态取决于 Codex 是否连接对应主机。本项目为独立社区程序，与 OpenAI 无隶属关系。
+桌面管道已在 Codex Windows **26.1106.6628.0** 上验证。Rust 版另在 **26.1117.4957.0** 上验证。更新后若旧管道不可用，桌宠仍随 Codex 显示，从本机桌面会话日志同步任务，并通过当前 Codex 安装自带的程序读取额度。此时远程任务和未写入日志的审批提示可能不可见。本项目为独立社区程序，与 OpenAI 无隶属关系。
 
 Rust 版通过同一个 EXE 的后台监听模式等待 Codex，再启动桌宠窗口。Electron 版的 `CodexPetHost.exe` 是无窗口、无托盘的 .NET 监听程序。两者均无需修改 Codex 安装文件或快捷方式。
 
@@ -75,7 +75,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-rust.ps1
 
 EXE 图标来自“元气挥手”第 48 帧笑脸头像，内嵌 16–256 像素的十种尺寸。来源记录见 [assets/ICON_SOURCE.json](assets/ICON_SOURCE.json)。
 
-应用逻辑集中在 [rust/codex_pet.rs](rust/codex_pet.rs)，构建依赖由 `rust/Cargo.toml` 和 `rust/Cargo.lock` 记录。脚本生成内嵌素材包、运行 34 项 Rust 测试，并输出单个 EXE 与 SHA-256 校验文件。
+应用逻辑集中在 [rust/codex_pet.rs](rust/codex_pet.rs)，构建依赖由 `rust/Cargo.toml` 和 `rust/Cargo.lock` 记录。脚本生成内嵌素材包、运行 35 项 Rust 测试，并输出单个 EXE 与 SHA-256 校验文件。
 
 Electron 版需要 Node.js 24+；生成 ZIP 还需要 Python 3。编译宿主使用 Windows 自带的 .NET Framework C# 编译器：
 
@@ -91,7 +91,7 @@ python scripts/archive.py
 
 源码在 `src/`，测试在 `tests/`，原生宿主源码在 `native/`。完整 92 张原始精灵图随仓库提供；需要重新下载时，在 PowerShell 7 中运行 `./scripts/download-assets.ps1`，脚本固定到已核对的上游版本。
 
-验证范围及版本修复记录见 [Rust 版记录](docs/rust.md#接入与验证) 和 [Electron 版记录](docs/verification.md)。构建检查包含 34 项 Rust 测试及单 EXE 编译、33 项 Electron 版测试及 32 个 CLI 宿主进程识别场景；两种实现共用会话来源和命令行反例，覆盖 Desktop 来源隔离、提示词中的服务名称、选项值、Windows 引号与中文参数。这些检查不代替真实 Codex、Windows 登录或跨机器验证。
+验证范围及版本修复记录见 [Rust 版记录](docs/rust.md#接入与验证) 和 [Electron 版记录](docs/verification.md)。构建检查包含 35 项 Rust 测试及单 EXE 编译、33 项 Electron 版测试及 32 个 CLI 宿主进程识别场景；两种实现共用会话来源和命令行反例，覆盖 Desktop 来源隔离、提示词中的服务名称、选项值、Windows 引号与中文参数。这些检查不代替真实 Codex、Windows 登录或跨机器验证。
 
 ## 素材来源与许可说明
 

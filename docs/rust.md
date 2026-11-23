@@ -4,7 +4,7 @@
 
 程序图标取自白龙“元气挥手”动作第 48 帧的笑脸头像，保留透明背景，内嵌 16–256 像素的十种尺寸。来源和裁剪记录见 [assets/ICON_SOURCE.json](../assets/ICON_SOURCE.json)，图标不需要作为外部文件放在 EXE 旁边。
 
-当前预览版：**[v0.5.0-preview.10](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.5.0-preview.10)** · [下载 EXE](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.10/CodexPet-Rust-Windows-x64-v0.5.0-preview.10.exe) · [SHA-256 校验文件](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.10/CodexPet-Rust-Windows-x64-v0.5.0-preview.10.exe.sha256)
+当前预览版：**[v0.5.0-preview.11](https://github.com/Miraclemarvel/codex-desktop-pet/releases/tag/v0.5.0-preview.11)** · [下载 EXE](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.11/CodexPet-Rust-Windows-x64-v0.5.0-preview.11.exe) · [SHA-256 校验文件](https://github.com/Miraclemarvel/codex-desktop-pet/releases/download/v0.5.0-preview.11/CodexPet-Rust-Windows-x64-v0.5.0-preview.11.exe.sha256)
 
 ## 使用
 
@@ -12,7 +12,7 @@
 
 从 Electron 版切换时，先在旧版右键关闭“随 Codex 启停”并退出旧桌宠，再运行 Rust 版。两个版本使用各自的设置目录和启动项，便于回退。
 
-Rust 版升级时，先在旧版右键选择“退出并关闭后台监听”，再双击新版 EXE；原有偏好与位置会保留。
+Rust 版升级时，先在旧版右键选择“退出并关闭后台监听”，再双击新版 EXE。若窗口已经隐藏，可在旧 EXE 所在文件夹打开 PowerShell，运行 `.\CodexPet-Rust-Windows-x64-v0.5.0-preview.10.exe --stop`（按实际文件名调整）。等后台进程退出后再运行新版，原有偏好与位置会保留。
 
 - 点击角色或状态条展开额度卡片；支持多额度窗口、重置时间、手动刷新和缓存提示。
 - 按住拖动，右键恢复到屏幕内。窗口按 Windows 原生屏幕坐标移动，静止长按不会反复写入位置。
@@ -45,6 +45,8 @@ Rust 版升级时，先在旧版右键选择“退出并关闭后台监听”，
 
 0.5.0-preview.10 将旧版 400% 摆幅作为新的 100% 基准。新安装默认 100%；升级时按旧数值的四分之一显示，实际幅度保持不变（例如旧 200% 显示为新 50%）。使用归一化设置 `dockSwayScale`，同时保留 `dockSwayPercent` 兼容回退，重复启动不会再次缩小幅度。独立设置面板改用圆角、薄荷绿配色和灰度抗锯齿文字，提供 25%、50%、100% 快捷档位与“恢复100%”，保留滑杆实时预览、松开保存、方向键及滚轮调节。
 
+0.5.0-preview.11 修复 Codex 更新后桌宠进程仍在运行、窗口却隐藏的问题。状态连接中断时，桌宠留在原位置等待同步，跟踪的 Codex 进程退出后桌宠仍会随之退出。可运行 `--probe 输出.json` 检查当前状态来源，其中 `desktop-session-events` 表示正在读取本机桌面任务事件。
+
 ## 无损封装
 
 92 个原始 WebP 文件共 136,977,916 字节，逐文件 zlib 封装后为 135,042,242 字节，缩小约 **1.41%**。每个文件都验证解包后与原始字节完全一致，不重新编码图像。EXE 的主要体积来自原始动画，移除 Electron 是更主要的程序体积收益。
@@ -67,13 +69,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-rust.ps1
 
 ## 接入与验证
 
-使用与 Electron 版相同的 Codex 桌面本地协议，仅调用 `list_threads` 与 `get_usage_limits` 两种只读工具，并持续处理任务状态订阅。对话正文、工具参数与待确认请求内容不保存在状态镜像中。当前适配仍以 Codex Windows 26.1106.6628.0 为验证对象。
+桌宠随它跟踪的 Codex 进程启停。状态连接中断时，桌宠留在原位置等待同步。支持旧版桌面事件流时，通过 `list_threads`、`get_usage_limits` 和状态订阅同步。
+
+Codex Windows 26.1117.4957.0 环境中没有旧事件管道时，桌宠从本机 Codex Desktop 的会话日志读取本次启动后的任务事件，点击额度卡片时调用该安装自带的 `codex.exe app-server` 查询额度。CLI、其他 IDE 和子代理的日志单独过滤。此模式可跟踪本机日志里记录的开始、完成和中断，远程任务及未写入日志的审批状态可能不可见。桌宠只保留状态和计数。原事件连接恢复后会自动切回。
 
 CLI 模式使用本地 `sessions/**/rollout-*.jsonl` 增量读取任务状态，不依赖 Desktop 管道；接受 `cli/exec` 来源，`vscode` 来源另需已知 CLI `originator`（`codex-tui`、`codex_cli_rs` 或 `codex_exec`），不会混入 `originator: Codex Desktop` 的桌面任务。额度卡片使用 CLI `app-server` 的只读 `account/rateLimits/read` 接口获取当前账号额度与可用重置次数，不依赖日志或额外模型请求。查询子进程在完成或 20 秒超时后退出；监听器传递实际 CLI 路径，手动运行可用 `CODEX_CLI_PATH` 或 `--codex-exe` 指定原生 EXE。[官方协议说明](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt) 定义了额度窗口及 `rateLimitResetCredits.availableCount` 字段。
 
 `--cli --probe 输出.json` 可检查日志状态和实时账号额度；`logUsage` 仅供比较日志快照，`usageError` 记录实时查询是否失败。`--cli --owner-probe 输出.json` 检查 CLI 进程识别。初始回读与单次读取均有上限，保留不完整行的文件偏移而不在内存保存正文。测试覆盖任务事件别名、完成/中断、历史状态过滤、分段写入、超长行跳过、文件截断/删除和来源隔离。真实 CLI 的审批及错误事件通常不落盘，不承诺与 Desktop 相同的提示精度；相关上游实现见 [事件协议](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs) 和 [日志持久化策略](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/policy.rs)。
 
-34 项 Rust 测试覆盖原始素材字节一致性、消息分帧、只读工具限制、状态优先级、额度缺失与边界值、正文丢弃、CLI 日志、待机动态、稳定颜色帧、静止长按、拖动坐标和透明合成。会话来源及 32 个命令行反例与 Electron 版共用，验证 Desktop 隔离、提示词、选项值、Windows 引号与中文参数。两版进程识别均使用 `CommandLineToArgvW`，跳过全局选项的值后只判断第一个位置参数；Rust 通过 WMI 获取的命令行以 UTF-8 JSON 传递，避免中文编码丢失。原生窗口测试另行验证长按 128 次采样不写入位置；独立模拟宿主验证随宿主启动、退出，以及手动退出后本会话不重开。真实 Codex 未在测试中关闭，Windows 注销和其他电脑的验收仍需另行进行。
+35 项 Rust 测试覆盖新版桌面事件读取与来源隔离、原始素材字节一致性、消息分帧、只读工具限制、状态优先级、额度缺失与边界值、正文丢弃、CLI 日志、待机动态、稳定颜色帧、静止长按、拖动坐标和透明合成。会话来源及 32 个命令行反例与 Electron 版共用，验证 Desktop 隔离、提示词、选项值、Windows 引号与中文参数。两版进程识别均使用 `CommandLineToArgvW`，跳过全局选项的值后只判断第一个位置参数；Rust 通过 WMI 获取的命令行以 UTF-8 JSON 传递，避免中文编码丢失。原生窗口测试另行验证长按 128 次采样不写入位置；独立模拟宿主验证随宿主启动、退出，以及手动退出后本会话不重开。真实 Codex 未在测试中关闭，Windows 注销和其他电脑的验收仍需另行进行。
 
 v0.5.0-preview.10 的两项新增测试覆盖旧设置迁移、实际摆幅一致性、重复序列化以及滑杆端点和标签。新面板已在隔离窗口中实际验证拖动预览与保存、50% 快捷档位、恢复 100% 和完成后关闭；沿用此前的真实账号读取验证，不将演示界面检查视为 Plus 账号实测。
 
